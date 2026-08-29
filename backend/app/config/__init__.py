@@ -27,8 +27,16 @@ class Settings(BaseSettings):
     # Seed a fully-working demo on first boot (empty DB).
     auto_seed: bool = True
 
-    # Weather source: auto | mock | live
+    # Weather source: auto (live-with-mock-fallback) | live | mock | csv
     weather_provider: str = "auto"
+    # API key for the real weather API, read from the environment only.
+    # Leave blank to run the whole application on deterministic mock weather.
+    weather_api_key: str = ""
+    # True forces the offline mock provider regardless of weather_provider.
+    weather_mock_mode: bool = False
+    # Path to a historical-weather CSV for the "csv" provider (missing file ->
+    # falls back to mock continuation).
+    weather_csv_path: str = ""
     weather_default_lat: float = 19.17
     weather_default_lon: float = 74.73
 

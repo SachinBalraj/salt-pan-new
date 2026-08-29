@@ -43,6 +43,7 @@ def latest_model(db: Session, kind: str) -> ModelVersion:
 def persist_forecast(db: Session, pan: Optional[Pan], days: list, source: str) -> None:
     gen_at = dt.datetime.utcnow()
     for day in days:
+        actual = day.get("actual_rainfall_mm")
         db.add(WeatherReading(
             pan_id=pan.id if pan else None,
             forecast_generated_at=gen_at,
@@ -54,6 +55,7 @@ def persist_forecast(db: Session, pan: Optional[Pan], days: list, source: str) -
             wind_speed_ms=round(float(day.get("wind_speed_kmh", 0.0)) / 3.6, 2),
             solar_radiation_wm2=round(float(day.get("sunshine_hours", 0.0)) * 100.0, 1),
             cloud_cover_pct=round(max(0.0, 100.0 - float(day.get("sunshine_hours", 0.0)) * 8.0), 1),
+            actual_rainfall_mm=round(float(actual), 1) if actual is not None else None,
             source=source,
         ))
     db.commit()

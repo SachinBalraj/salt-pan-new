@@ -92,7 +92,7 @@ Open http://localhost:3000 (dashboard) or http://localhost:8000/docs (API).
 
 ```bash
 cd backend && source .venv/bin/activate
-pytest -q          # 50 tests: health, datasets, ingestion, proxies, full training/prediction pipeline, Phase-6 ML, Phase-7 digital-twin + sensors
+pytest -q          # 60 tests: health, datasets, ingestion, proxies, full training/prediction pipeline, Phase-6 ML, Phase-7 digital-twin + sensors, Phase-8 weather service
 cd ../frontend
 npm run build      # type-check + lint + production bundle
 npm run lint
@@ -104,7 +104,10 @@ npm run lint
 |---------------------|--------------------------------------------------------|--------------------------------------------|
 | `DATABASE_URL`      | SQLite for local / PostgreSQL in compose               | `postgresql+psycopg://…` or `sqlite:///…`   |
 | `AUTO_SEED`         | `true`                                                 | seed demo pans + train models on empty DB  |
-| `WEATHER_PROVIDER`  | `auto`                                                 | `auto`/`mock`/`live` forecast resolution   |
+| `WEATHER_PROVIDER`  | `auto`                                                 | `auto` (live w/ mock fallback) / `live` / `mock` / `csv` |
+| `WEATHER_API_KEY`   | *(empty)*                                             | real weather API key; empty ⇒ the app runs fully on mock weather |
+| `WEATHER_MOCK_MODE` | `false`                                               | `true` forces the deterministic offline mock |
+| `WEATHER_CSV_PATH`  | *(empty → `data/samples/weather_historical.csv`)*     | historical-weather CSV for `WEATHER_PROVIDER=csv` |
 | `CORS_ORIGINS`      | `http://localhost:3000,http://127.0.0.1:3000`          | comma-separated browser origins allowed    |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000`                              | API base the frontend bundle calls         |
 
@@ -129,7 +132,8 @@ npm run lint
 | GET/POST| `/api/pans`                        | Register pans, read/write their twin state     |
 | GET    | `/api/pans/{pan_id}/digital-twin`   | Full operational twin snapshot (salinity, depth, brine temp, volume, dissolved salt mass, forecast rain + probability, post-rain depth/salinity, evaporation, readiness, climate risk, last operation, last update) |
 | POST   | `/api/sensors/readings`             | Ingest a pan-sensor reading: validate → save → forecast → update twin → predict (if an active model exists) → refresh recommendations |
-| GET    | `/api/weather/forecast`             | `scenario=auto|mock|live`, force refresh       |
+| GET    | `/api/weather/forecast`             | `scenario=auto|mock|live|csv`, force refresh      |
+| POST   | `/api/weather/actual`               | Record observed rainfall for a stored forecast day (forecast stays untouched) |
 | POST   | `/api/predictions/run`              | 7-day readiness + risk forecast with SHAP (rejects `409` with no active model) |
 | POST   | `/api/simulations/what-if-rain`     | "Rain tomorrow?" twin simulation with impact   |
 | GET/POST| `/api/recommendations`             | Generate rule-based harvest advice             |
@@ -154,7 +158,7 @@ Operational data lives in ten tables. Migrations are in `backend/alembic`
 | `datasets`           | Registered data sources (uploads, training pool, feedback)     |
 | `pans`               | Salt pans: `pan_code`, name, lat/lon, `area_m2`               |
 | `sensor_readings`    | Raw in-pan measurements (brine density, depth, thickness, etc.)|
-| `weather_readings`   | Per-day forecast rows (shared cache + per-pan live/mock)       |
+| `weather_readings`   | Per-day forecast rows (shared cache + per-pan; `forecast_rain_mm` + `actual_rainfall_mm` kept separate) |
 | `digital_twin_states`| Twin snapshots (`state_json` + derived readiness/risk columns) |
 | `model_versions`     | Trained artifacts + metrics per `kind` (`GradientBoostingRegressor`, `RandomForestClassifier`, `RandomForestRegressor`), track `uses_proxy_labels`, split dates, test rows, training errors, active flag |
 | `predictions`        | Model runs; legacy fields stashed in `input_snapshot_json`     |
@@ -298,13 +302,43 @@ previous pending advice is expired and a fresh top-3 set is issued. Sensed
 salinity is converted to the internal °Bé density (÷ 9.5) so the twin physics,
 forecast and ML features stay consistent.
 
+## Weather service (Phase 8 — pluggable providers)
+
+Forecasts come from a small provider interface in `app/services/weather/`,
+selected at runtime from the environment:
+
+```
+auto   (default)  try the real weather API, fall back to a deterministic mock
+live              require the real weather API (mock fallback on outages)
+mock              always the built-in deterministic offline generator
+csv               serve day-by-day values from a historical-weather CSV
+```
+
+Decisions are environment-driven — **no API keys live in source code**:
+
+- `WEATHER_PROVIDER` selects the mode; `WEATHER_API_KEY` carries the key and,
+  when empty, the application **still runs completely on mock weather**.
+- `WEATHER_MOCK_MODE=true` force-activates mock from any configuration.
+- `WEATHER_CSV_PATH` sets the history file for `csv` (default
+  `data/samples/weather_historical.csv`); a missing or unreadable CSV (or a
+  requested day past the records) falls back to mock continuation, reported as
+  `source=csv` / `csv+mock` / `mock`.
+
+**Forecast and observed rainfall are stored separately.** Every
+`weather_readings` row keeps `forecast_rain_mm` (never mutates) and
+`actual_rainfall_mm` (stamped via `POST /api/weather/actual`, matched to the
+pan's newest forecast batch). Both are returned by `GET /api/weather/forecast`
+and the digital-twin snapshot; the legacy `rainfall_mm = forecast_rain_mm`
+field is preserved for the frontend. A provider outage in `auto`/`live` mode
+emits mock data labelled `… (fallback)`, so the platform never goes dark.
+
 ## Repository layout
 
 ```
 backend/
   alembic/            # migrations (initial, Phase-2 normalized schema, Phase-3 dataset_type)
   app/                # FastAPI app: routers/, services/, ml/
-  tests/              # pytest suite (50 tests)
+  tests/              # pytest suite (60 tests)
 data/
   samples/            # etc. bundled sample dataset (salt_pan_dataset.csv)
   processed/          # training pool + feedback CSV (gitignored)

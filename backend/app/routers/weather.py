@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Pan, WeatherReading
-from app.schemas import WeatherForecastOut
+from app.schemas import WeatherActualOut, WeatherActualRequest, WeatherForecastOut
 from app.services.weather_provider import weather_provider
 
 router = APIRouter(prefix="/api/weather", tags=["weather"])
@@ -24,8 +24,10 @@ def _parse_date(value) -> Optional[dt.date]:
 
 def _days_to_rows(pan_id: Optional[int], days: list, source: str) -> List[WeatherReading]:
     gen_at = dt.datetime.utcnow()
-    return [
-        WeatherReading(
+    rows = []
+    for d in days:
+        actual = d.get("actual_rainfall_mm")
+        rows.append(WeatherReading(
             pan_id=pan_id,
             forecast_generated_at=gen_at,
             forecast_for=_parse_date(d.get("date")),
@@ -36,10 +38,10 @@ def _days_to_rows(pan_id: Optional[int], days: list, source: str) -> List[Weathe
             wind_speed_ms=round(float(d.get("wind_speed_kmh", 0.0)) / 3.6, 2),
             solar_radiation_wm2=round(float(d.get("sunshine_hours", 0.0)) * 100.0, 1),
             cloud_cover_pct=round(max(0.0, 100.0 - float(d.get("sunshine_hours", 0.0)) * 8.0), 1),
+            actual_rainfall_mm=round(float(actual), 1) if actual is not None else None,
             source=source,
-        )
-        for d in days
-    ]
+        ))
+    return rows
 
 
 def _rows_to_forecast(rows: List[WeatherReading]) -> WeatherForecastOut:
@@ -58,6 +60,9 @@ def _rows_to_forecast(rows: List[WeatherReading]) -> WeatherForecastOut:
                 "rainfall_mm": r.forecast_rain_mm,
                 "precipitation_probability_pct": r.rain_probability_pct,
                 "sunshine_hours": round(r.solar_radiation_wm2 / 100.0, 1),
+                "forecast_rain_mm": r.forecast_rain_mm,
+                "actual_rainfall_mm": r.actual_rainfall_mm,
+                "id": r.id,
             }
             for r in batch
         ],
@@ -103,6 +108,48 @@ def get_forecast(
     db.commit()
     db.refresh(rows[0])
     return _rows_to_forecast(rows)
+
+
+@router.post("/actual", response_model=WeatherActualOut)
+def record_actual_rainfall(body: WeatherActualRequest, db: Session = Depends(get_db)):
+    """Record observed rainfall for a stored forecast day.
+
+    Keeps `forecast_rain_mm` and `actual_rainfall_mm` separate: the forecast
+    column is never touched; only the observed amount is stamped on the row for
+    the matching date in the pan's newest forecast batch.
+    """
+    if not db.get(Pan, body.pan_id):
+        raise HTTPException(404, "Salt pan not found")
+    date = _parse_date(body.date)
+    if not date:
+        raise HTTPException(400, "date must be a YYYY-MM-DD string")
+
+    latest = (db.query(WeatherReading)
+              .filter(WeatherReading.pan_id == body.pan_id)
+              .order_by(WeatherReading.forecast_generated_at.desc())
+              .first())
+    if not latest:
+        raise HTTPException(404, "No forecast stored for this salt pan")
+    gen_at = latest.forecast_generated_at
+    row = (db.query(WeatherReading)
+           .filter(WeatherReading.pan_id == body.pan_id,
+                   WeatherReading.forecast_generated_at == gen_at,
+                   WeatherReading.forecast_for == date)
+           .first())
+    if not row:
+        raise HTTPException(404, f"No forecast stored for {body.date}")
+
+    row.actual_rainfall_mm = round(float(body.actual_rainfall_mm), 1)
+    db.commit()
+    db.refresh(row)
+    return WeatherActualOut(
+        pan_id=row.pan_id,
+        date=row.forecast_for.isoformat() if row.forecast_for else body.date,
+        forecast_rain_mm=row.forecast_rain_mm,
+        actual_rainfall_mm=row.actual_rainfall_mm,
+        source=row.source,
+        updated_at=dt.datetime.utcnow().isoformat(),
+    )
 
 
 def read_forecast_file(path: str) -> List[dict]:

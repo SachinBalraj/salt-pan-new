@@ -126,7 +126,7 @@ def latest_forecast_days(db: Session, pan: Pan, days: int = 7) -> List[dict]:
     batch.sort(key=lambda r: r.forecast_for or dt.date.max)
     out: List[dict] = []
     for r in batch:
-        out.append({
+        day = {
             "date": r.forecast_for.isoformat() if r.forecast_for else "",
             "temperature_c": r.temperature_c,
             "humidity_pct": r.humidity_pct,
@@ -134,7 +134,10 @@ def latest_forecast_days(db: Session, pan: Pan, days: int = 7) -> List[dict]:
             "rainfall_mm": r.forecast_rain_mm,
             "precipitation_probability_pct": r.rain_probability_pct,
             "sunshine_hours": round(r.solar_radiation_wm2 / 100.0, 1),
-        })
+        }
+        if r.actual_rainfall_mm is not None:
+            day["actual_rainfall_mm"] = r.actual_rainfall_mm
+        out.append(day)
     return out[:days]
 
 

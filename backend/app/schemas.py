@@ -270,6 +270,9 @@ class ForecastDay(BaseModel):
     rainfall_mm: float
     precipitation_probability_pct: float
     sunshine_hours: float
+    forecast_rain_mm: float = 0.0
+    actual_rainfall_mm: Optional[float] = None
+    id: Optional[int] = None
 
 
 class WeatherForecastOut(BaseModel):
@@ -278,6 +281,22 @@ class WeatherForecastOut(BaseModel):
     source: str
     generated_at: datetime
     days: List[ForecastDay]
+
+
+class WeatherActualRequest(BaseModel):
+    pan_id: int
+    date: str = Field(..., description="YYYY-MM-DD the forecast was for")
+    actual_rainfall_mm: float = Field(..., ge=0.0, le=1000.0,
+                                      description="Observed rainfall for that day")
+
+
+class WeatherActualOut(BaseModel):
+    pan_id: int
+    date: str
+    forecast_rain_mm: float
+    actual_rainfall_mm: float
+    source: str
+    updated_at: str
 
 
 # ------------------------------------------------------------------ Predictions / Simulation
