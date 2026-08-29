@@ -122,24 +122,41 @@ def seed_all(db: Session) -> dict:
     from app.services.training import train_model
     from app.config.proxy_labels import get_proxy_labels_config
     from app.services.proxy_labels import ensure_labels
+    from app.services.model_targets import resolve_targets
 
     prep_df, label_report = ensure_labels(df, get_proxy_labels_config(),
                                           dataset_source="generated")
+    prep_df, target_report = resolve_targets(prep_df, label_report,
+                                             dataset_source="generated")
     model_records: Dict[str, ModelVersion] = {}
-    for kind in ("harvest_readiness", "climate_risk"):
+    model_kinds = ("harvest_readiness", "climate_risk",
+                   "climate_risk_classifier", "harvest_readiness_classifier",
+                   "harvest_time_regressor")
+    for kind in model_kinds:
         trained = train_model(kind, prep_df, dataset_id, settings.models_path,
-                              labels_report=label_report)
-        proxy_flags = (label_report or {}).get("uses_proxy_labels_by_kind") or {}
+                              labels_report=label_report,
+                              target_report=target_report,
+                              dataset_name=dataset.name)
+        split = trained.get("split") or {}
+        trs, tre = split.get("train_dates") or [None, None]
         mv = ModelVersion(
             model_name=trained["model_name"],
             model_type=kind,
+            algorithm=trained.get("algorithm", ""),
+            target_column=trained.get("target", ""),
             version=trained["version"],
             model_path=trained["artifact_path"],
             training_rows=int(trained["rows_trained"]),
+            test_rows=int(trained.get("test_rows", 0)),
+            training_start_date=trs,
+            training_end_date=tre,
+            split_json=split,
             metrics_json=trained["metrics"],
             feature_names_json=trained["feature_names"],
-            uses_proxy_labels=bool(proxy_flags.get(kind, True)),
-            active=True,
+            uses_proxy_labels=bool(trained["uses_proxy_labels"]),
+            training_errors_json=trained.get("training_errors", []),
+            dataset_id=dataset_id,
+            active=bool(trained["version"] and trained["status"] == "trained"),
         )
         db.add(mv)
         db.flush()

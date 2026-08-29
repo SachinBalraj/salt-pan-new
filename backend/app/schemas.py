@@ -161,7 +161,9 @@ class TwinUpdateRequest(BaseModel):
 
 # ------------------------------------------------------------------ ML models
 class TrainRequest(BaseModel):
-    kind: str = Field(..., description="harvest_readiness | climate_risk | all")
+    kind: str = Field(...,
+                      description=("harvest_readiness | climate_risk | climate_risk_classifier | "
+                                   "harvest_readiness_classifier | harvest_time_regressor | all"))
     dataset_id: Optional[int] = None
 
 
@@ -170,12 +172,23 @@ class ModelOut(ORMModel):
     name: str
     kind: str
     version: int
-    status: str
+    status: str  # active | trained | deferred
     feature_names: List[str]
     metrics: Dict[str, Any]
     rows_trained: int
+    test_rows: int = 0
+    algorithm: str = ""
+    target: str = ""
+    split: Dict[str, Any] = {}
+    training_errors: List[str] = []
+    classes: Optional[List[str]] = None
+    confusion_matrix: Optional[List[List[int]]] = None
+    class_distribution: Optional[Dict[str, Dict[str, int]]] = None
     dataset_id: Optional[int]
+    dataset_used: Optional[str] = None
+    model_path: str = ""
     uses_proxy_labels: bool = True
+    is_active: bool = False
     created_at: datetime
 
 

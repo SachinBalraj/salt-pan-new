@@ -25,9 +25,14 @@ const topShap = (shap: Record<string, number> | undefined, n = 3) =>
 export default function PredictPanel() {
   const qc = useQueryClient();
   const { data: pans } = useQuery({ queryKey: ["pans"], queryFn: api.pans });
+  const { data: status } = useQuery({
+    queryKey: ["status"],
+    queryFn: api.status,
+  });
   const [panId, setPanId] = useState<number>(0);
   const [horizon, setHorizon] = useState(7);
   const selected = pans?.find((p) => p.id === panId) ?? pans?.[0];
+  const noActiveModel = !status?.any_active_model;
 
   const run = useMutation({
     mutationFn: () => api.runPrediction(selected!.id, horizon, "actual_forecast"),
@@ -62,14 +67,27 @@ export default function PredictPanel() {
             </select>
             <button
               onClick={() => run.mutate()}
-              disabled={run.isPending || !selected}
+              disabled={run.isPending || !selected || noActiveModel}
               className="rounded-lg bg-brine-500 px-3 py-2 text-sm font-medium text-brine-950 transition hover:bg-brine-400 disabled:opacity-40"
+              title={noActiveModel ? "No active model — train one in the Models tab first" : undefined}
             >
               {run.isPending ? "Predicting…" : "Run prediction"}
             </button>
           </div>
         }
       >
+        {noActiveModel && (
+          <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+            Prediction is disabled because there is no active trained model.
+            Train a model from the Models tab, or restart with AUTO_SEED=true
+            (Demo seed) to activate one.
+          </div>
+        )}
+        {run.isError && (
+          <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+            {run.error instanceof Error ? run.error.message : "Prediction failed."}
+          </div>
+        )}
         {!r ? (
           <Spinner label="Select a pan and run the prediction." />
         ) : (

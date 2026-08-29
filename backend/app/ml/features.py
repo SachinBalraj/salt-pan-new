@@ -59,12 +59,57 @@ FEATURE_COLUMNS: Dict[str, List[str]] = {
         "salt_thickness_mm",
         "season_code",
     ],
+    # Phase 6: three supervised models (RandomForest classifiers + regressor).
+    "climate_risk_classifier": [
+        "precipitation_7d_forecast_mm",
+        "precipitation_probability_pct",
+        "temperature_c",
+        "humidity_pct",
+        "wind_speed_kmh",
+        "days_since_last_rain",
+        "water_depth_cm",
+        "brine_density_be",
+        "salt_thickness_mm",
+        "season_code",
+    ],
+    "harvest_readiness_classifier": [
+        "temperature_c",
+        "humidity_pct",
+        "wind_speed_kmh",
+        "sunshine_hours",
+        "days_since_last_rain",
+        "water_depth_cm",
+        "brine_density_be",
+        "salt_thickness_mm",
+        "season_code",
+    ],
+    "harvest_time_regressor": [
+        "temperature_c",
+        "humidity_pct",
+        "wind_speed_kmh",
+        "sunshine_hours",
+        "days_since_last_rain",
+        "water_depth_cm",
+        "brine_density_be",
+        "salt_thickness_mm",
+        "season_code",
+    ],
 }
 
 TARGET_COLUMNS: Dict[str, str] = {
     "harvest_readiness": "harvest_readiness",
     "climate_risk": "climate_risk",
+    "climate_risk_classifier": "risk_level",
+    "harvest_readiness_classifier": "harvest_ready",
+    "harvest_time_regressor": "hours_to_harvest",
 }
+
+CLASSIFIER_KINDS: List[str] = ["climate_risk_classifier", "harvest_readiness_classifier"]
+REGRESSOR_KINDS: List[str] = ["harvest_time_regressor"]
+
+# Phase 6: verified field targets only (never proxy). Synthetic datasets get
+# fewer than this many real labels and the model is deferred instead.
+MIN_VERIFIED_REGRESSION_ROWS = 30
 
 SEASON_TABLE = {12: 0, 1: 0, 2: 1, 3: 1, 4: 1, 5: 1, 6: 2, 7: 2, 8: 2, 9: 2, 10: 3, 11: 3}
 
@@ -105,21 +150,33 @@ def build_training_matrices(
     df: pd.DataFrame, kind: str
 ) -> tuple[pd.DataFrame, pd.Series]:
     """Return (X, y) for a given model kind using column groups."""
+    X, y, _ = training_matrices_with_dates(df, kind)
+    return X, y
+
+
+def training_matrices_with_dates(
+    df: pd.DataFrame, kind: str
+) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
+    """Return (X, y, dates) aligned on the same rows for a model kind."""
     nf = normalize_raw_dataframe(df)
     features = FEATURE_COLUMNS[kind]
     target = TARGET_COLUMNS[kind]
     if target not in nf.columns:
         raise ValueError(
             f"Dataset is missing target column '{target}' required to train "
-            f"a {kind} model. Valid targets: harvest_readiness, climate_risk."
+            f"a {kind} model. Valid targets: {', '.join(sorted(TARGET_COLUMNS.values()))}."
         )
-    y = pd.to_numeric(nf[target], errors="coerce")
-    X = nf[features].copy()
-    X = X[y.notna()]
-    y = y.dropna()
-    # Rows without any signal are not useful for regression.
-    mask = y.iloc[:0].notna()  # placeholder
-    return X, y
+    raw = nf[target]
+    if raw.dtype == "object":
+        y = raw.astype(str).str.strip().replace({"": None, "nan": None, "None": None})
+    else:
+        y = pd.to_numeric(raw, errors="coerce")
+    y = pd.Series(y, index=nf.index, name=target)
+    keep = y.notna()
+    X = nf[features].copy().loc[keep]
+    y = y[keep]
+    dates = pd.to_datetime(nf["date"], errors="coerce").reindex(X.index)
+    return X, y, dates
 
 
 def evap_index(temperature_c: float, humidity_pct: float, wind_speed_kmh: float,

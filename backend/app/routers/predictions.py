@@ -120,6 +120,17 @@ def run_prediction(body: PredictRequest, db: Session = Depends(get_db)):
     if not pan:
         raise HTTPException(404, "Salt pan not found")
 
+    # Phase 6: no active model, no prediction. A last-resort demo seed (only
+    # possible on a completely empty DB) keeps the classic demo workflow intact.
+    active = db.query(ModelVersion).filter(ModelVersion.active.is_(True)).first()
+    if not active:
+        from app.services.seeding import seed_all
+        seed_all(db)
+        active = db.query(ModelVersion).filter(ModelVersion.active.is_(True)).first()
+    if not active:
+        raise HTTPException(
+            409, "No active model available. Train a model (POST /api/models/train) first.")
+
     forecast_days = resolve_forecast(db, pan, body.horizon_days)
     models, model_versions = load_models(db, settings)
     state = get_twin_state(db, pan)

@@ -193,7 +193,7 @@ export default function Dashboard() {
       <div>
         <Card
           title="Model performance"
-          subtitle="Validation metrics of the trained harvest-readiness & climate-risk models"
+          subtitle="Validation metrics of the trained machine-learning models (legacy scorers, Phase-6 classifiers & regressor)"
         >
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             {Object.entries(s?.model_kinds ?? {}).map(([kind, m]) => (
@@ -202,21 +202,33 @@ export default function Dashboard() {
                 className="rounded-lg border border-white/5 bg-black/20 p-3"
               >
                 <div className="text-[11px] uppercase tracking-wider text-slate-500">
-                  {kind.replace("_", " ")}
+                  {kind.replaceAll("_", " ")}
                 </div>
-                {m.available ? (
+                {!m.available ? (
+                  <div className="mt-1 text-sm text-amber-400">Not trained</div>
+                ) : m.version === 0 ? (
+                  <div className="mt-1 text-sm text-red-400">Deferred — insufficient outcome data</div>
+                ) : (
                   <>
-                    <div className="mt-1 text-lg font-bold text-emerald-400">
-                      R² {m.metrics.r2?.toFixed(3) ?? "—"}
-                    </div>
+                    {m.algorithm?.startsWith("RandomForestClassifier") ? (
+                      <div className="mt-1 text-lg font-bold text-emerald-400">
+                        Acc {m.metrics.accuracy?.toFixed(3) ?? "—"}
+                      </div>
+                    ) : (
+                      <div className="mt-1 text-lg font-bold text-emerald-400">
+                        R² {m.metrics.r2?.toFixed(3) ?? "—"}
+                      </div>
+                    )}
                     <div className="text-[11px] text-slate-500">
-                      MAE {m.metrics.mae?.toFixed(3) ?? "—"} · RMSE{" "}
-                      {m.metrics.rmse?.toFixed(3) ?? "—"} · Acc{" "}
-                      {m.metrics.accuracy?.toFixed(3) ?? "—"}
+                      {m.metrics.mae !== undefined && <>MAE {m.metrics.mae.toFixed(3)} · </>}
+                      {m.metrics.rmse !== undefined && <>RMSE {m.metrics.rmse.toFixed(3)} · </>}
+                      {m.metrics.accuracy !== undefined && <>Acc {m.metrics.accuracy.toFixed(3)} · </>}
+                      {m.metrics.f1 !== undefined && <>F1 {m.metrics.f1.toFixed(3)}</>}
+                    </div>
+                    <div className="mt-1 text-[10px] text-slate-600">
+                      v{m.version} · {m.rows_trained} rows{m.active ? " · active" : ""}
                     </div>
                   </>
-                ) : (
-                  <div className="mt-1 text-sm text-amber-400">Not trained</div>
                 )}
               </div>
             ))}

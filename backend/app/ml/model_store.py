@@ -9,7 +9,20 @@ import joblib
 KIND_NAMES = {
     "harvest_readiness": "Salt Harvest Readiness",
     "climate_risk": "Climate Risk",
+    "climate_risk_classifier": "Climate Risk Classifier",
+    "harvest_readiness_classifier": "Harvest Readiness Classifier",
+    "harvest_time_regressor": "Harvest Time Regressor",
 }
+
+
+def latest_version(kind: str, models_dir: Path) -> int:
+    best = 0
+    for f in sorted(models_dir.glob(f"{kind}_v*.joblib")):
+        try:
+            best = max(best, int(f.stem.split("_v")[-1]))
+        except (IndexError, ValueError):
+            continue
+    return best
 
 
 def model_path(kind: str, models_dir: Path, version: int = 1) -> Path:

@@ -116,9 +116,12 @@ export const api = {
 
   // ---- models
   models: () => get<MlModel[]>("/api/models"),
+  modelLatest: () => get<MlModel[]>("/api/models/latest"),
   modelLabelStatus: () => get<LabelStatus>("/api/models/label-status"),
   train: (body: { kind: string; dataset_id?: number | null }) =>
     post<MlModel[]>("/api/models/train", body),
+  activateModel: (id: number) =>
+    post<MlModel>(`/api/models/${id}/activate`),
   modelShap: (id: number) =>
     get<{ model_id: number; kind: string; shap_importance: { feature: string; importance: number }[] }>(
       `/api/models/${id}/shap`,

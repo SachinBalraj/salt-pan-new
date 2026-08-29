@@ -11,6 +11,7 @@ import datetime as dt
 from typing import Dict, Optional
 
 from app.models import (
+    DataSet,
     DigitalTwinState,
     HarvestOutcome,
     ModelVersion,
@@ -320,18 +321,35 @@ def outcome_to_dict(out: HarvestOutcome) -> dict:
 
 
 # ------------------------------------------------------------------ Models
-def model_to_dict(mv: ModelVersion) -> dict:
+def model_to_dict(mv: ModelVersion, db=None) -> dict:
+    dataset_used = None
+    try:
+        if db is not None and mv.dataset_id:
+            ds = db.get(DataSet, mv.dataset_id)
+            dataset_used = ds.name if ds else None
+    except Exception:  # pragma: no cover - defensive
+        dataset_used = None
     return {
         "id": mv.id,
         "name": mv.model_name,
         "kind": mv.model_type,
         "version": mv.version,
-        "status": "active" if mv.active else "trained",
+        "status": "active" if mv.active else ("deferred" if mv.version == 0 else "trained"),
         "feature_names": mv.feature_names_json or [],
         "metrics": mv.metrics_json or {},
         "rows_trained": mv.training_rows,
-        "dataset_id": None,
+        "test_rows": mv.test_rows or 0,
+        "algorithm": mv.algorithm or "",
+        "target": mv.target_column or "",
+        "split": mv.split_json or {},
+        "training_errors": mv.training_errors_json or [],
+        "classes": (mv.metrics_json or {}).get("classes"),
+        "confusion_matrix": (mv.metrics_json or {}).get("confusion_matrix"),
+        "class_distribution": (mv.metrics_json or {}).get("class_distribution"),
+        "dataset_id": mv.dataset_id,
+        "dataset_used": dataset_used,
         "model_path": mv.model_path,
         "uses_proxy_labels": mv.uses_proxy_labels,
+        "is_active": bool(mv.active),
         "created_at": mv.created_at,
     }

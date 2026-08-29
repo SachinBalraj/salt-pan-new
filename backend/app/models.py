@@ -149,22 +149,28 @@ class DigitalTwinState(Base):
 
 
 class ModelVersion(Base):
-    """A trained model artefact (harvest-readiness or climate-risk)."""
+    """A trained, versioned model artefact (classifier / regressor / scorer)."""
 
     __tablename__ = "model_versions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     model_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    model_type: Mapped[str] = mapped_column(String(64), nullable=False)  # harvest_readiness | climate_risk
+    model_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    algorithm: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    target_column: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     version: Mapped[int] = mapped_column(Integer, default=1)
     model_path: Mapped[str] = mapped_column(String(1024), default="")
     trained_at: Mapped[datetime] = mapped_column(DateTime, default=UTC)
     training_rows: Mapped[int] = mapped_column(Integer, default=0)
+    test_rows: Mapped[int] = mapped_column(Integer, default=0)
     training_start_date: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     training_end_date: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    split_json: Mapped[dict] = mapped_column(JSON, default=dict)
     metrics_json: Mapped[dict] = mapped_column(JSON, default=dict)
     feature_names_json: Mapped[list] = mapped_column(JSON, default=list)
     uses_proxy_labels: Mapped[bool] = mapped_column(Boolean, default=True)
+    training_errors_json: Mapped[list] = mapped_column(JSON, default=list)
+    dataset_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=UTC)
 

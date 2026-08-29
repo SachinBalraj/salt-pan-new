@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.database import Base, engine, get_db
+from app.database import Base, engine, ensure_schema, get_db
 from app.models import (  # noqa: F401  (register models)
     DataSet,
     DigitalTwinState,
@@ -38,6 +38,7 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    ensure_schema(engine)  # idempotent column sync for pre-existing databases
     app.state.seeded = False
     if settings.auto_seed:
         from app.services.seeding import seed_all
@@ -95,22 +96,31 @@ def system_status(db: Session = Depends(get_db)):
     recs = db.query(Recommendation).count()
     outcomes_count = db.query(HarvestOutcome).count()
     kind_status = {}
-    for kind in ("harvest_readiness", "climate_risk"):
+    for kind in ("harvest_readiness", "climate_risk", "climate_risk_classifier",
+                 "harvest_readiness_classifier", "harvest_time_regressor"):
         m = (db.query(ModelVersion).filter(ModelVersion.model_type == kind)
              .order_by(ModelVersion.active.desc(), ModelVersion.created_at.desc()).first())
         kind_status[kind] = {
             "available": m is not None,
+            "active": bool(m.active) if m else False,
             "id": m.id if m else None,
             "version": m.version if m else None,
+            "target": getattr(m, "target_column", ""),
+            "algorithm": getattr(m, "algorithm", ""),
             "metrics": m.metrics_json if m else {},
             "rows_trained": m.training_rows if m else 0,
+            "test_rows": m.test_rows if m else 0,
+            "training_errors": getattr(m, "training_errors_json", []) or [],
             "uses_proxy_labels": bool(m.uses_proxy_labels) if m else True,
         }
+    any_active_model = bool(
+        db.query(ModelVersion).filter(ModelVersion.active.is_(True)).first())
     return {
         "seeded": seeded,
         "pans": pans,
         "models": models_count,
         "model_kinds": kind_status,
+        "any_active_model": any_active_model,
         "datasets": datasets_count,
         "predictions": predictions_count,
         "recommendations": recs,

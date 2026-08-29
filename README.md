@@ -3,9 +3,11 @@
 A full-stack mini-project that manages salt pans as **digital twins**, marries
 them with **weather forecasts** (Open-Meteo live or an offline mock), scores a
 **harvest-readiness** and **climate-risk** pair of **GradientBoost ML models**
-(with SHAP explanations), runs **"what-if it rains?"** simulations, issues
-**recommendations** for harvest dates, records **verified outcomes**, and
-**feeds corrections back** into model retraining.
+(with SHAP explanations), trains three **supervised Phase-6 models** — a
+**climate-risk classifier**, a **harvest-readiness classifier** and a
+**harvest-time regressor** on verified field outcomes — runs **"what-if it
+rains?"** simulations, issues **recommendations** for harvest dates, records
+**verified outcomes**, and **feeds corrections back** into model retraining.
 
 ## Stack
 
@@ -47,7 +49,7 @@ docker compose up --build
 - Health probe: http://localhost:8000/api/health
 
 On first boot the backend runs `alembic upgrade head`, then auto-seeds demo
-data (3 salt pans, 2 trained ML models, sample predictions/recommendations)
+data (3 salt pans, 5 trained ML kinds, sample predictions/recommendations)
 because `AUTO_SEED=true`. Restart to re-seed, because the seed runs only when
 the DB is empty.
 
@@ -87,7 +89,7 @@ Open http://localhost:3000 (dashboard) or http://localhost:8000/docs (API).
 
 ```bash
 cd backend && source .venv/bin/activate
-pytest -q          # 21 tests: health, datasets, ingestion pipeline, full training/prediction pipeline
+pytest -q          # 42 tests: health, datasets, ingestion, proxies, full training/prediction pipeline, Phase-6 ML
 cd ../frontend
 npm run build      # type-check + lint + production bundle
 npm run lint
@@ -123,7 +125,7 @@ npm run lint
 | POST   | `/api/datasets/{id}/import`          | Confirm import of valid rows into operational tables |
 | GET/POST| `/api/pans`                        | Register pans, read/write their twin state     |
 | GET    | `/api/weather/forecast`             | `scenario=auto|mock|live`, force refresh       |
-| POST   | `/api/predictions/run`              | 7-day readiness + risk forecast with SHAP      |
+| POST   | `/api/predictions/run`              | 7-day readiness + risk forecast with SHAP (rejects `409` with no active model) |
 | POST   | `/api/simulations/what-if-rain`     | "Rain tomorrow?" twin simulation with impact   |
 | GET/POST| `/api/recommendations`             | Generate rule-based harvest advice             |
 | POST   | `/api/recommendations/{id}/respond` | Farmer accept/decline with notes               |
@@ -131,12 +133,16 @@ npm run lint
 | GET    | `/api/evaluation/summary`           | Precision/recall, readiness MAE, yield MAE     |
 | POST   | `/api/evaluation/feedback`          | Fold outcomes into retraining pool + twin      |
 | GET    | `/api/models/label-status`          | Proxy/field label provenance + warning banner  |
-| GET/POST| `/api/models`/`/api/models/train`  | List models, train; each `ModelOut` carries `uses_proxy_labels` |
+| GET/POST| `/api/models`/`/api/models/train`  | List models, train (all five kinds or one); `ModelOut` carries `uses_proxy_labels`, split dates, test rows, metrics, training errors |
+| GET    | `/api/models/latest`                 | Newest trained version per model kind          |
+| POST   | `/api/models/{id}/activate`          | Activate a version (deactivates same-kind siblings) |
 
 ## Database schema (Phase 2 — normalized)
 
 Operational data lives in ten tables. Migrations are in `backend/alembic`
-(current head `60c7818b02fe`, Phase-3 dataset upload/validation column).
+(current head `a1b2c3d4e5f6`, which adds the Phase-6 ML-training columns to
+`model_versions`; older databases are also synced idempotently at startup by
+`ensure_schema`).
 
 | Table                | Purpose                                                        |
 |----------------------|----------------------------------------------------------------|
@@ -145,7 +151,7 @@ Operational data lives in ten tables. Migrations are in `backend/alembic`
 | `sensor_readings`    | Raw in-pan measurements (brine density, depth, thickness, etc.)|
 | `weather_readings`   | Per-day forecast rows (shared cache + per-pan live/mock)       |
 | `digital_twin_states`| Twin snapshots (`state_json` + derived readiness/risk columns) |
-| `model_versions`     | Trained GradientBoost artifacts + metrics per `kind`           |
+| `model_versions`     | Trained artifacts + metrics per `kind` (`GradientBoostingRegressor`, `RandomForestClassifier`, `RandomForestRegressor`), track `uses_proxy_labels`, split dates, test rows, training errors, active flag |
 | `predictions`        | Model runs; legacy fields stashed in `input_snapshot_json`     |
 | `recommendations`    | Rule-based advice (status: pending/accepted/declined)          |
 | `operation_events`   | Farmer responses (`farmer_notes`), related to recommendations  |
@@ -223,13 +229,45 @@ rules are configurable, not hard-coded, in
 `backend/app/config/proxy_labels.yaml` and can be overridden at runtime with
 `PROXY_LABELS_CONFIG_FILE=/path/to/my_calibrated.yaml`.
 
+## Supervised ML training (Phase 6)
+
+Beyond the two legacy gradient-boosting scorers, the pipeline trains three
+Phase-6 models through the same `POST /api/models/train` endpoint:
+`climate_risk_classifier` (`risk_level` → LOW/MEDIUM/HIGH), 
+`harvest_readiness_classifier` (`harvest_ready` → 0/1) and
+`harvest_time_regressor` (`hours_to_harvest`).
+
+- **Targets** — the classifiers use real field values where provenance is
+  recorded and fall back to the Phase-5 proxy signals otherwise
+  (`climate_risk_class` binning, `harvest_readiness >= 0.55`), stamping each
+  row's source. The regressor is trained **only on verified field outcomes** —
+  proxy hours are never fabricated. On a synthetic demo dataset it has no
+  verified rows and is **deferred** with
+  `["Insufficient verified outcome data."]`.
+- **Time-based split** — every kind is split chronologically (80/20) so no
+  future observation ever leaks into the training past
+  (`ModelOut.split.future_leakage_prevented`).
+- **Metrics** — classifiers report accuracy / macro precision / recall / F1
+  plus the confusion matrix and per-class train/test distribution; the
+  regressors report MAE / RMSE / R². Artifacts are versioned with joblib
+  (`models/model_kind_vN.joblib`).
+- **Activation** — `POST /api/models/{id}/activate` makes a version active and
+  deactivates its same-kind siblings; freshly trained models start active.
+- **Prediction gate** — `POST /api/predictions/run` returns `409` when no
+  active model exists (`/api/system/status` exposes `any_active_model`), and
+  the frontend disables *Run prediction* accordingly.
+
+The training page shows the dataset used, training/test row counts, split date
+range, feature list, metrics, proxy-label flag, model version and training
+errors.
+
 ## Repository layout
 
 ```
 backend/
   alembic/            # migrations (initial, Phase-2 normalized schema, Phase-3 dataset_type)
   app/                # FastAPI app: routers/, services/, ml/
-  tests/              # pytest suite (32 tests)
+  tests/              # pytest suite (42 tests)
 data/
   samples/            # etc. bundled sample dataset (salt_pan_dataset.csv)
   processed/          # training pool + feedback CSV (gitignored)

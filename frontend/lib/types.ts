@@ -6,13 +6,19 @@ export interface SystemStatus {
     string,
     {
       available: boolean;
+      active: boolean;
       id: number | null;
       version: number | null;
+      target: string;
+      algorithm: string;
       metrics: ModelMetrics;
       rows_trained: number;
+      test_rows: number;
+      training_errors: string[];
       uses_proxy_labels: boolean;
     }
   >;
+  any_active_model: boolean;
   datasets: number;
   predictions: number;
   recommendations: number;
@@ -152,6 +158,21 @@ export interface ModelMetrics {
   recall?: number;
   f1?: number;
   threshold?: number;
+  [key: string]: unknown;
+}
+
+export interface ModelSplit {
+  split_type?: string;
+  train_fraction?: number;
+  train_dates?: [string | null, string | null] | (string | null)[];
+  test_dates?: [string | null, string | null] | (string | null)[];
+  dataset_range?: [string | null, string | null] | (string | null)[];
+  future_leakage_prevented?: boolean;
+  [key: string]: unknown;
+}
+
+export interface ClassDistribution {
+  [className: string]: { train: number; test: number; predicted_test: number };
 }
 
 export interface MlModel {
@@ -163,8 +184,19 @@ export interface MlModel {
   feature_names: string[];
   metrics: ModelMetrics;
   rows_trained: number;
+  test_rows: number;
+  algorithm: string;
+  target: string;
+  split: ModelSplit;
+  training_errors: string[];
+  classes: string[] | null;
+  confusion_matrix: number[][] | null;
+  class_distribution: ClassDistribution | null;
   dataset_id: number | null;
-  uses_proxy_labels?: boolean;
+  dataset_used: string | null;
+  model_path: string;
+  uses_proxy_labels: boolean;
+  is_active: boolean;
   created_at: string;
 }
 
