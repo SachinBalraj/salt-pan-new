@@ -26,6 +26,7 @@ export interface DataSet {
   filename: string;
   rows_count: number;
   columns: string[];
+  dataset_type?: string | null;
   status: string;
   validation_report: {
     valid?: boolean;
@@ -40,6 +41,78 @@ export interface DataSet {
   };
   source: string;
   created_at: string;
+}
+
+export interface ColumnMapping {
+  original: string;
+  canonical: string;
+  converted?: boolean;
+}
+
+export interface DatasetAnalysis {
+  file_name: string;
+  dataset_type: string;
+  detection_confidence: number;
+  status: "valid" | "needs_review" | "invalid";
+  valid_rows: number;
+  rejected_rows: number;
+  required_missing: string[];
+  unmapped: string[];
+  mappings: ColumnMapping[];
+  renames: Record<string, { to: string; why: string }>;
+  conversions: { column: string; note: string; from_unit: string; factor: number }[];
+  duplicates: number;
+  quality: {
+    missing: Record<string, number>;
+    out_of_range: Record<string, { min: number; max: number; count: number; rows: number[] }>;
+    outliers: Record<string, { count: number; band: number; break_low: number; break_high: number; rows: number[]; q1: number; q3: number }>;
+    non_numeric: Record<string, number>;
+    valid_sample: Record<string, unknown>[];
+  };
+}
+
+export interface UploadPreview {
+  file_name: string;
+  dataset_type: string;
+  detection_confidence: number;
+  required: string[];
+  missing: string[];
+  extra: string[];
+  mappings: ColumnMapping[];
+  renames: Record<string, { to: string; why: string }>;
+  conversions: { column: string; note: string; from_unit: string }[];
+  duplicates: number;
+  sample_rows: Record<string, unknown>[];
+  errors: string[];
+  warnings: string[];
+}
+
+export interface ThresholdRow {
+  column: string;
+  min?: number | null;
+  max?: number | null;
+  outlier_band?: number | null;
+  unit: string;
+  notes: string;
+}
+
+export interface Thresholds {
+  meta: { status: string; version: number; note: string };
+  file: string;
+  types: Record<string, { key: string; label: string; required: string[]; optional: string[] }>;
+  aliases: Record<string, string[]>;
+  unit_conversions: Record<string, { matches: string[]; factor: number; from_unit: string; note: string }[]>;
+  thresholds: ThresholdRow[];
+}
+
+export interface ImportResult {
+  dataset: DataSet;
+  summary: {
+    dataset_type: string;
+    imported_rows: number;
+    tables: string[];
+    created_pans: string[];
+  };
 }
 
 export interface SaltPan {

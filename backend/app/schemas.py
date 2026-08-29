@@ -17,6 +17,7 @@ class DataSetOut(ORMModel):
     filename: str
     rows_count: int
     columns: List[str]
+    dataset_type: Optional[str] = None
     status: str
     validation_report: Dict[str, Any]
     source: str
@@ -26,6 +27,88 @@ class DataSetOut(ORMModel):
 class DataSetPreview(BaseModel):
     rows: List[Dict[str, Any]]
     columns: List[str]
+
+
+# ------------------------------------------------------------------ Phase 3: dataset upload / validation
+class DatasetTypeOut(BaseModel):
+    key: str
+    label: str
+    required: List[str]
+    optional: List[str]
+
+
+class ThresholdOut(BaseModel):
+    column: str
+    min: Optional[float] = None
+    max: Optional[float] = None
+    outlier_band: Optional[float] = None
+    unit: str = ""
+    notes: str = ""
+
+
+class ThresholdsOut(BaseModel):
+    meta: Dict[str, Any]
+    file: str
+    types: Dict[str, DatasetTypeOut]
+    aliases: Dict[str, List[str]]
+    unit_conversions: Dict[str, List[Dict[str, Any]]]
+    thresholds: List[ThresholdOut]
+
+
+class ColumnMappingOut(BaseModel):
+    original: str
+    canonical: str
+    converted: bool = False
+
+
+class QualityOut(BaseModel):
+    valid_rows: int
+    rejected_rows: int
+    missing: Dict[str, int]
+    outliers: Dict[str, Dict[str, Any]]
+    rejected_samples: List[Dict[str, Any]]
+
+
+class DatasetAnalysisOut(BaseModel):
+    file_name: str
+    dataset_type: str
+    detection_confidence: float
+    status: str
+    valid_rows: int
+    rejected_rows: int
+    required_missing: List[str]
+    unmapped: List[str]
+    mappings: List[ColumnMappingOut]
+    renames: Dict[str, Dict[str, Any]]
+    conversions: List[Dict[str, Any]]
+    duplicates: int
+    quality: Dict[str, Any]
+
+
+class UploadPreviewOut(BaseModel):
+    file_name: str
+    dataset_type: str
+    detection_confidence: float
+    required: List[str]
+    missing: List[str]
+    extra: List[str]
+    mappings: List[ColumnMappingOut]
+    renames: Dict[str, Dict[str, Any]]
+    conversions: List[Dict[str, Any]]
+    duplicates: int
+    sample_rows: List[Dict[str, Any]]
+    errors: List[str]
+    warnings: List[str]
+
+
+class UploadOut(BaseModel):
+    dataset: DataSetOut
+    analysis: DatasetAnalysisOut
+
+
+class ImportOut(BaseModel):
+    dataset: DataSetOut
+    summary: Dict[str, Any]
 
 
 # ------------------------------------------------------------------ SaltPan / Twin

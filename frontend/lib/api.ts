@@ -1,9 +1,11 @@
 import type {
   ComparisonRow,
   DataSet,
+  DatasetAnalysis,
   EvaluationSummary,
   FeedbackResult,
   ForecastDay,
+  ImportResult,
   MlModel,
   Outcome,
   PredictionRecord,
@@ -12,6 +14,8 @@ import type {
   SaltPan,
   SimulationResult,
   SystemStatus,
+  Thresholds,
+  UploadPreview,
   WeatherForecastOut,
 } from "./types";
 
@@ -67,17 +71,37 @@ export const api = {
 
   // ---- datasets
   datasets: () => get<DataSet[]>("/api/datasets"),
-  datasetPreview: (id: number, n = 10) =>
+  datasetThresholds: () => get<Thresholds>("/api/datasets/thresholds"),
+  datasetPreview: (id: number, n = 10, stage = "raw") =>
     get<{ columns: string[]; rows: Record<string, unknown>[] }>(
-      `/api/datasets/${id}/preview?n=${n}`,
+      `/api/datasets/${id}/preview?n=${n}&stage=${stage}`,
     ),
-  uploadDataset: (file: File) => {
+  datasetAnalysis: (id: number) =>
+    get<DatasetAnalysis>(`/api/datasets/${id}/analysis`),
+  previewUpload: (
+    file: File,
+    opts: { dataset_type?: string; field_mapping?: Record<string, string> } = {},
+  ) => {
     const fd = new FormData();
     fd.append("file", file);
+    if (opts.dataset_type) fd.append("dataset_type", opts.dataset_type);
+    if (opts.field_mapping) fd.append("field_mapping", JSON.stringify(opts.field_mapping));
+    return post<UploadPreview>("/api/datasets/preview", fd);
+  },
+  uploadDataset: (
+    file: File,
+    opts: { dataset_type?: string; field_mapping?: Record<string, string> } = {},
+  ) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (opts.dataset_type) fd.append("dataset_type", opts.dataset_type);
+    if (opts.field_mapping) fd.append("field_mapping", JSON.stringify(opts.field_mapping));
     return post<DataSet>("/api/datasets/upload", fd);
   },
   validateDataset: (id: number) => post<DataSet>(`/api/datasets/${id}/validate`),
   promoteDataset: (id: number) => post<DataSet>(`/api/datasets/${id}/promote`),
+  importDataset: (id: number) => post<ImportResult>(`/api/datasets/${id}/import`),
+  invalidRowsUrl: (id: number) => `${API_BASE}/api/datasets/${id}/invalid_rows`,
 
   // ---- pans
   pans: () => get<SaltPan[]>("/api/pans"),

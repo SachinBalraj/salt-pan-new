@@ -36,7 +36,8 @@ class DataSet(Base):
     filepath: Mapped[str] = mapped_column(String(1024), nullable=False)
     rows_count: Mapped[int] = mapped_column(Integer, default=0)
     columns: Mapped[list] = mapped_column(JSON, default=list)
-    status: Mapped[str] = mapped_column(String(32), default="uploaded")  # uploaded|validating|valid|invalid|promoted
+    dataset_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)  # sensor|weather|operations|combined
+    status: Mapped[str] = mapped_column(String(32), default="uploaded")  # uploaded|valid|needs_review|invalid|imported|promoted
     validation_report: Mapped[dict] = mapped_column(JSON, default=dict)
     source: Mapped[str] = mapped_column(String(32), default="upload")  # upload|generated|feedback
     created_at: Mapped[datetime] = mapped_column(DateTime, default=UTC)

@@ -1,0 +1,125 @@
+# ============================================================================
+# PROTO TYPE DOMAIN THRESHOLDS  (PENDING FIELD CALIBRATION)
+# ----------------------------------------------------------------------------
+# These bounds implement LOGICAL range validation for uploaded datasets.
+# They are NOT field-verified constants -- they are prototype settings that
+# MUST be re-calibrated against instrument specs, pan geometry and local
+# conditions by an agronomist / operations engineer before production use.
+#
+# Structure
+# ---------
+#   meta.status = "prototype"  (flip to "calibrated" once tuned)
+#   <dataset_type>.<column>:
+#       min / max        HARD logical bounds. A value outside these makes the
+#                        ROW invalid (rejected on import, download reasons).
+#       outlier_band     IQR multiplier for the STATISTICAL OUTLIER report
+#                        only (0 disables). Outliers are flagged but never
+#                        silently removed -- they remain importable.
+#
+# Override the whole file at runtime with
+#   DOMAIN_THRESHOLDS_FILE=/path/to/my_calibrated.yaml
+# ============================================================================
+meta:
+  status: prototype
+  version: 1
+  note: >
+    Prototype thresholds requiring field calibration (instrument ranges, pan
+    geometry, local climate). Review and re-tune before production use.
+
+# ---- 1. Pan sensor readings -----------------------------------------------
+sensor:
+  pan_area_m2:         { min: 1.0,    max: 10000000.0, outlier_band: 4 }
+  salinity_g_l:        { min: 0.0,    max: 350.0,      outlier_band: 3 }
+  water_depth_cm:      { min: 0.0,    max: 500.0,      outlier_band: 4 }
+  brine_temperature_c: { min: -5.0,   max: 60.0,       outlier_band: 4 }
+  air_temperature_c:   { min: -20.0,  max: 55.0,       outlier_band: 4 }
+  humidity_pct:        { min: 0.0,    max: 100.0,      outlier_band: 0 }
+
+# ---- 2. Weather data -------------------------------------------------------
+weather:
+  forecast_rain_mm:    { min: 0.0,   max: 500.0,      outlier_band: 4 }
+  rain_probability_pct: { min: 0.0,   max: 100.0,      outlier_band: 0 }
+  actual_rainfall_mm:   { min: 0.0,   max: 1000.0,     outlier_band: 5 }
+  air_temperature_c:    { min: -20.0, max: 55.0,       outlier_band: 4 }
+  humidity_pct:         { min: 0.0,   max: 100.0,      outlier_band: 0 }
+  wind_speed_ms:        { min: 0.0,   max: 60.0,       outlier_band: 4 }
+
+# ---- 3. Operations & harvest outcomes -------------------------------------
+operations:
+  transferred_volume_l: { min: 0.0,   max: 1000000.0,  outlier_band: 5 }
+  pump_duration_min:    { min: 0.0,   max: 1440.0,     outlier_band: 5 }
+  drained_volume_l:     { min: 0.0,   max: 1000000.0,  outlier_band: 5 }
+  actual_yield_kg:      { min: 0.0,   max: 500000.0,   outlier_band: 5 }
+  salt_purity_pct:      { min: 0.0,   max: 100.0,      outlier_band: 0 }
+  yield_loss_pct:       { min: 0.0,   max: 100.0,      outlier_band: 0 }
+
+# ---- 4. Combined master dataset (daily rows per pan for ML) ---------------
+combined:
+  temperature_c:                { min: -20.0, max: 55.0,  outlier_band: 4 }
+  humidity_pct:                 { min: 0.0,   max: 100.0, outlier_band: 0 }
+  wind_speed_kmh:               { min: 0.0,   max: 160.0, outlier_band: 4 }
+  rainfall_mm:                  { min: 0.0,   max: 500.0, outlier_band: 4 }
+  sunshine_hours:               { min: 0.0,   max: 24.0,  outlier_band: 4 }
+  water_depth_cm:               { min: 0.0,   max: 500.0, outlier_band: 4 }
+  brine_density_be:             { min: 0.0,   max: 32.0,  outlier_band: 3 }
+  salt_thickness_mm:            { min: 0.0,   max: 500.0, outlier_band: 4 }
+  days_since_last_rain:         { min: 0.0,   max: 365.0, outlier_band: 5 }
+  precipitation_7d_forecast_mm: { min: 0.0,   max: 1000.0, outlier_band: 5 }
+  precipitation_probability_pct: { min: 0.0,   max: 100.0, outlier_band: 0 }
+
+# ---- Column-alias normalisation (string form, lowercased, no punctuation) --
+# key = canonical column; value = aliases that map to it.
+aliases:
+  timestamp:  [timestamp, datetime, date_time, ts, time_stamp, measured_at, reading_time, recorded_at]
+  date:       [date, day, obs_date, observation_date, dt]
+  pan_id:     [pandid, panid, pan, pancode, pan_code, pan_ref, panref, plotid]
+  pan_area_m2: [panaream2, pan_area, aream2, area_m2, panarea, area_sqm, area_m_sq]
+  salinity_g_l: [salinitygl, salinitygl, salinity_g/l, salinity_gl, salinity_ppt, salinity_psu, sal, tds_g_l, tds_gl, brine_ec]
+  water_depth_cm: [waterdepthcm, depthcm, depth_cm, water_depth, water_level_cm, waterdepth]
+  brine_temperature_c: [brinetemperaturec, brine_temp_c, brinetempc, brine_temperature, brine_c, brine_temp]
+  air_temperature_c: [airtemperaturec, temp_c, temperature_c, air_temperature, airtempc, tempc, ta]
+  humidity_pct: [humiditypct, humidity_percent, humidity, relative_humidity, relativhumidity, rh, rh_pct]
+  wind_speed_ms: [windspeedms, wind_speed_m_s, windspeed_m_s, wind, wind_speed, ws_ms, windspeedkmh, windspeedkmhr, wind_speed_kmh]
+  wind_speed_kmh: [windspeedkmh, windspeedkmhr, wind_speed_kmh, wind_speed, ws_kmh]
+  forecast_rain_mm: [forecastrain24hmm, forecastrainmm24h, rain_forecast_mm, forecast_rain, forecast_rain_24h, predicted_rain_mm, rain_24h_mm, rain_24h, rain_forecast_24h_mm]
+  rain_probability_pct: [rainprobabilitypct, rain_probability, pop_pct, chance_of_rain, precip_prob_pct, precipitation_probability, rainprobability, rain_probability_pct]
+  actual_rainfall_mm: [actualrainfallmm, rainfall_mm, rain_mm, actual_rain, measured_rain_mm, precip_mm, actualrainmm]
+  storm_rain_mm: [stormrainmm, storm_rain, rainfall_event_mm]
+  event_timestamp: [eventtimestamp, event_time, operation_time, evt_ts, timestamp, datetime, happened_at]
+  event_type: [eventtype, operation, operation_type, activity, action, work_type]
+  transferred_volume_l: [transferredvolumel, transfer_volume_l, volume_transferred_l, vol_l, transfer_l]
+  pump_duration_min: [pumpdurationmin, pump_time_min, pump_minutes, pumpduration]
+  drained_volume_l: [drainedvolumel, drain_volume_l, volume_drained_l, drained_l]
+  protection_applied: [protectionapplied, protected, protection, cover_used, covered]
+  harvest_date: [harvestdate, harvest_day, date_harvested]
+  actual_yield_kg: [actualyieldkg, yield_kg, harvest_yield_kg, yield, yieldkg]
+  salt_purity_pct: [saltpuritypct, purity_pct, salt_purity, purity, nacl_pct]
+  yield_loss_pct: [yieldlosspct, loss_pct, yield_loss, loss_percent]
+  rainfall_mm: [rainfallmm, rain_mm, precip_mm_combined, rain]
+  sunshine_hours: [sunshinehours, sun_hours, sunshine, sunhours]
+  brine_density_be: [brinedensitybe, brine_density, density_be, baume, be, salinity_be, brine_density_baume]
+  salt_thickness_mm: [saltthicknessmm, thickness_mm, salt_thickness, crust_mm]
+  days_since_last_rain: [dayssincelastrain, dry_days, days_dry, last_rain_days]
+  precipitation_7d_forecast_mm: [precipitation7dforecastmm, next7d_rain_mm, rain_7d_forecast_mm, precip_7d_mm]
+  precipitation_probability_pct: [precipitationprobabilitypct, precip_prob_pct, rain_prob_7d_pct]
+  temperature_c: [temperature_c, temp_c, ambient_temperature_c, temp_celsius]
+  latitude: [latitude, lat, y_coord]
+  longitude: [longitude, lon, lng, x_coord]
+  location: [location, site, place, locality]
+  source: [source, data_source, origin]
+  season: [season]
+  salinity_measured_at: [salinitymeasuredat]
+
+# ---- Unit conversions applied transparently during normalisation -----------
+# matches = aliases whose ORIGINAL header triggers the conversion.
+unit_conversions:
+  wind_speed_ms:
+    - matches: [windspeedkmh, windspeedkmhr, ws_kmh, wind_speed_kmh]
+      factor: 0.2777778
+      from_unit: km/h
+      note: "wind speed converted from km/h to m/s (÷3.6)"
+  humidity_pct:
+    - matches: [humidityfraction, rh_fraction, relativehumidityfraction, humidityratio]
+      factor: 100.0
+      from_unit: 'fraction 0..1'
+      note: "humidity converted from fraction to percent (×100)"
