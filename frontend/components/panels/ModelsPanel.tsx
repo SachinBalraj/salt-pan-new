@@ -22,6 +22,25 @@ import {
 } from "@/components/ui";
 import { useDatasets } from "./common";
 
+function ProxyNotice() {
+  const { data: status } = useQuery({
+    queryKey: ["label-status"],
+    queryFn: api.modelLabelStatus,
+  });
+  if (!status || !status.any_active_proxy) return null;
+  return (
+    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+      <p className="text-sm font-bold tracking-wide text-amber-200">
+        PROXY/SIMULATED MODEL — NOT YET FIELD VALIDATED
+      </p>
+      <p className="mt-1 text-xs text-amber-200/70">{status.subtext}</p>
+      <p className="mt-1 break-all text-[10px] text-amber-200/50">
+        Active rule file: {status.config_file}
+      </p>
+    </div>
+  );
+}
+
 export default function ModelsPanel() {
   const qc = useQueryClient();
   const { data: models, isLoading } = useQuery({
@@ -42,12 +61,18 @@ export default function ModelsPanel() {
         dataset_id: datasetId ? Number(datasetId) : null,
       }),
     onSuccess: (created) => {
+      const flagged = created.filter((m) => m.uses_proxy_labels);
+      const note =
+        flagged.length > 0
+          ? " PROXY/SIMULATED labels in use — not yet field validated."
+          : " Trained on real field labels.";
       setMsg({
         kind: "ok",
-        text: `Trained ${created.map((m) => m.kind).join(", ")} (v${created.map((m) => m.version).join("/v")}).`,
+        text: `Trained ${created.map((m) => m.kind).join(", ")} (v${created.map((m) => m.version).join("/v")}).${note}`,
       });
       qc.invalidateQueries({ queryKey: ["models"] });
       qc.invalidateQueries({ queryKey: ["status"] });
+      qc.invalidateQueries({ queryKey: ["label-status"] });
     },
     onError: (e: Error) => setMsg({ kind: "err", text: e.message }),
   });
@@ -60,8 +85,12 @@ export default function ModelsPanel() {
 
   if (isLoading) return <Spinner label="Loading models…" />;
 
+  const proxyModels = (models ?? []).filter((m) => m.uses_proxy_labels);
+
   return (
     <div className="space-y-5">
+      {proxyModels.length > 0 && <ProxyNotice />}
+
       <Card
         title="Train machine-learning models"
         subtitle="GradientBoosting regressors with cross-validated metrics and global SHAP feature importance"
@@ -126,6 +155,7 @@ export default function ModelsPanel() {
                   <th className="py-2 pr-4">Kind</th>
                   <th className="py-2 pr-4">Version</th>
                   <th className="py-2 pr-4">Rows</th>
+                  <th className="py-2 pr-4">Labels</th>
                   <th className="py-2 pr-4">MAE</th>
                   <th className="py-2 pr-4">RMSE</th>
                   <th className="py-2 pr-4">R²</th>
@@ -147,6 +177,25 @@ export default function ModelsPanel() {
                     </td>
                     <td className="py-2 pr-4 tabular-nums text-slate-400">
                       {m.rows_trained.toLocaleString()}
+                    </td>
+                    <td className="py-2 pr-4">
+                      {m.uses_proxy_labels === false ? (
+                        <Badge
+                          className="border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                          title="Trained on real field measurements"
+                        >
+                          FIELD
+                        </Badge>
+                      ) : m.uses_proxy_labels ? (
+                        <Badge
+                          className="border-amber-500/40 bg-amber-500/15 text-amber-300"
+                          title="Trained on proxy/simulated labels — not field validated"
+                        >
+                          PROXY
+                        </Badge>
+                      ) : (
+                        <span className="text-slate-600">—</span>
+                      )}
                     </td>
                     <td className="py-2 pr-4 tabular-nums text-slate-300">
                       {m.metrics.mae?.toFixed(4)}

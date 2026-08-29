@@ -175,7 +175,17 @@ class ModelOut(ORMModel):
     metrics: Dict[str, Any]
     rows_trained: int
     dataset_id: Optional[int]
+    uses_proxy_labels: bool = True
     created_at: datetime
+
+
+class LabelStatusOut(BaseModel):
+    banner: str
+    subtext: str
+    any_active_proxy: bool
+    models: Dict[str, bool]
+    config_file: str
+    methodology_file: str
 
 
 # ------------------------------------------------------------------ Weather
@@ -331,6 +341,8 @@ class EvaluationSummary(BaseModel):
     harvest_delay_mean_days: Optional[float]
     recommendations: Dict[str, int]
     by_prediction_type: Dict[str, int]
+    proxy_labels_in_use: bool = False
+    proxy_note: str = ""
 
 
 class FeedbackResult(BaseModel):

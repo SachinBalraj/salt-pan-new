@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import get_db
 from app.models import DataSet, ModelVersion
-from app.schemas import ModelOut, TrainRequest
+from app.schemas import LabelStatusOut, ModelOut, TrainRequest
+from app.services.proxy_labels import ensure_labels, labels_status_summary
 from app.services.serializers import model_to_dict
 from app.services.training import train_model
 
@@ -22,6 +23,13 @@ router = APIRouter(prefix="/api/models", tags=["ml models"])
 def list_models(db: Session = Depends(get_db)):
     return [model_to_dict(m) for m in db.query(ModelVersion)
             .order_by(ModelVersion.created_at.desc()).all()]
+
+
+@router.get("/label-status", response_model=LabelStatusOut)
+def label_status(db: Session = Depends(get_db)):
+    """Proxy vs field label provenance for registered models + warning banner."""
+    models = db.query(ModelVersion).order_by(ModelVersion.created_at.desc()).all()
+    return labels_status_summary(db_models=models)
 
 
 @router.get("/{model_id}", response_model=ModelOut)
@@ -68,10 +76,25 @@ def train(body: TrainRequest, db: Session = Depends(get_db)):
             raise HTTPException(400, "No dataset available. Upload one or re-seed the demo.")
         df = pd.read_csv(ds.filepath)
 
+    # Phase 5: resolve missing real labels. Rows with field provenance keep
+    # their measured values; everything else is synthesised with documented
+    # proxy labels and flagged so the trained ModelVersion records
+    # uses_proxy_labels accordingly.
+    from app.config.proxy_labels import get_proxy_labels_config
+
+    label_report = None
+    try:
+        df, label_report = ensure_labels(df, get_proxy_labels_config(),
+                                         dataset_source=ds.source)
+    except Exception as exc:  # pragma: no cover - defensive
+        raise HTTPException(400, f"Label preparation failed: {exc}") from exc
+
     created: List[ModelVersion] = []
+    proxy_flags = (label_report or {}).get("uses_proxy_labels_by_kind") or {}
     for kind in kinds:
         try:
-            trained = train_model(kind, df, ds.id, settings.models_path)
+            trained = train_model(kind, df, ds.id, settings.models_path,
+                                  labels_report=label_report)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         mv = ModelVersion(
@@ -82,7 +105,7 @@ def train(body: TrainRequest, db: Session = Depends(get_db)):
             training_rows=int(trained["rows_trained"]),
             metrics_json=trained["metrics"],
             feature_names_json=trained["feature_names"],
-            uses_proxy_labels=True,
+            uses_proxy_labels=bool(proxy_flags.get(kind, True)),
             active=True,
         )
         db.add(mv)

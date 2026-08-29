@@ -6,6 +6,7 @@ import type {
   FeedbackResult,
   ForecastDay,
   ImportResult,
+  LabelStatus,
   MlModel,
   Outcome,
   PredictionRecord,
@@ -115,6 +116,7 @@ export const api = {
 
   // ---- models
   models: () => get<MlModel[]>("/api/models"),
+  modelLabelStatus: () => get<LabelStatus>("/api/models/label-status"),
   train: (body: { kind: string; dataset_id?: number | null }) =>
     post<MlModel[]>("/api/models/train", body),
   modelShap: (id: number) =>

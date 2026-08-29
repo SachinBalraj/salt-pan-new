@@ -130,6 +130,8 @@ npm run lint
 | POST   | `/api/outcomes`                     | Record verified field outcome                  |
 | GET    | `/api/evaluation/summary`           | Precision/recall, readiness MAE, yield MAE     |
 | POST   | `/api/evaluation/feedback`          | Fold outcomes into retraining pool + twin      |
+| GET    | `/api/models/label-status`          | Proxy/field label provenance + warning banner  |
+| GET/POST| `/api/models`/`/api/models/train`  | List models, train; each `ModelOut` carries `uses_proxy_labels` |
 
 ## Database schema (Phase 2 — normalized)
 
@@ -191,13 +193,43 @@ runtime with `DOMAIN_THRESHOLDS_FILE=/path/to/my_calibrated.yaml`.
 `min`/`max` are hard bounds (exceeding them rejects the row); `outlier_band`
 is the IQR multiplier for the report-only outlier flag.
 
+## Missing real labels (Phase 5 — proxy / simulation mode)
+
+Real field measurements are not always available for the ML targets
+(`harvest_readiness`, `climate_risk`, `days_to_harvest`, `yield_loss_pct`,
+`recommended_action`). The training pipeline runs in two modes:
+
+- **Field-data mode** — rows that carry a field provenance marker are used
+  unchanged: a `label_source == "field"` column, a per-label
+  `*_source == "field"` column, or data ingested from the verified feedback
+  loop (`source == "feedback"`).
+- **Proxy / simulation mode** — everything else is synthesised with
+  documented mass-balance calculations and configurable expert rules and is
+  stamped `*_source == "proxy"`. Proxy values are **never** presented as field
+  measurements.
+
+Every trained `ModelVersion` records `uses_proxy_labels` (DB column + API
+`ModelOut.uses_proxy_labels` + artifact `.meta.json`). It is `true` whenever
+*any* training row used a proxy label (including mixed field/proxy datasets).
+While it is `true` the UI shows a persistent banner:
+
+> **PROXY/SIMULATED MODEL — NOT YET FIELD VALIDATED**
+
+The exact formulas, constants and the **target-leakage** note (metrics against
+features that directly produced a label are *self-consistency* checks, not
+independent validation) are in
+[`docs/proxy_label_methodology.md`](docs/proxy_label_methodology.md). The expert
+rules are configurable, not hard-coded, in
+`backend/app/config/proxy_labels.yaml` and can be overridden at runtime with
+`PROXY_LABELS_CONFIG_FILE=/path/to/my_calibrated.yaml`.
+
 ## Repository layout
 
 ```
 backend/
   alembic/            # migrations (initial, Phase-2 normalized schema, Phase-3 dataset_type)
   app/                # FastAPI app: routers/, services/, ml/
-  tests/              # pytest suite (21 tests)
+  tests/              # pytest suite (32 tests)
 data/
   samples/            # etc. bundled sample dataset (salt_pan_dataset.csv)
   processed/          # training pool + feedback CSV (gitignored)

@@ -120,10 +120,16 @@ def seed_all(db: Session) -> dict:
 
     # ---- 3. Train models ---------------------------------------------------
     from app.services.training import train_model
+    from app.config.proxy_labels import get_proxy_labels_config
+    from app.services.proxy_labels import ensure_labels
 
+    prep_df, label_report = ensure_labels(df, get_proxy_labels_config(),
+                                          dataset_source="generated")
     model_records: Dict[str, ModelVersion] = {}
     for kind in ("harvest_readiness", "climate_risk"):
-        trained = train_model(kind, df, dataset_id, settings.models_path)
+        trained = train_model(kind, prep_df, dataset_id, settings.models_path,
+                              labels_report=label_report)
+        proxy_flags = (label_report or {}).get("uses_proxy_labels_by_kind") or {}
         mv = ModelVersion(
             model_name=trained["model_name"],
             model_type=kind,
@@ -132,7 +138,7 @@ def seed_all(db: Session) -> dict:
             training_rows=int(trained["rows_trained"]),
             metrics_json=trained["metrics"],
             feature_names_json=trained["feature_names"],
-            uses_proxy_labels=True,
+            uses_proxy_labels=bool(proxy_flags.get(kind, True)),
             active=True,
         )
         db.add(mv)

@@ -1,0 +1,145 @@
+# ============================================================================
+# PROXY / SIMULATION LABEL RULES  (PROTOTYPE - NOT FIELD VALIDATED)
+# ----------------------------------------------------------------------------
+# When a training dataset does not carry REAL field measurements for the ML
+# targets, these documented mass-balance calculations and expert rules are used
+# to SYNTHESISE prototype labels. Proxy labels are NOT real field records; any
+# model trained on them reports uses_proxy_labels=true and the UI shows:
+#
+#     PROXY/SIMULATED MODEL -- NOT YET FIELD VALIDATED
+#
+# Structure
+# ---------
+#   meta.status        "prototype" until expert-calibrated.
+#   provenance         how "field" labels are recognised (column / value pairs
+#                      and the dataset.source value that marks verified field
+#                      feedback).
+#   labels.<name>      per-label mode selection + all rule constants.
+#   leakage            target -> feature pairs where a target was computed
+#                      DIRECTLY from a feature. Metrics against these features
+#                      are NOT independent evidence of model accuracy.
+#
+# Override the whole file at runtime with
+#   PROXY_LABELS_CONFIG_FILE=/path/to/my_calibrated.yaml
+# ============================================================================
+meta:
+  status: prototype
+  version: 1
+  note: >
+    Prototype mass-balance formulas and expert rules for synthesising missing
+    labels. Every constant here is documented in
+    docs/proxy_label_methodology.md and MUST be reviewed by a salt-pan
+    operations engineer before any production claim.
+
+provenance:
+  # A row is treated as carrying a REAL field label when the dataset uses these
+  # provenance markers. Anything else (absent provenance) defaults to PROXY so
+  # we never present synthetic values as measured field data.
+  field_columns:
+    - name: label_source
+      value: field
+  # Verified field feedback (HarvestOutcome rows ingested via the feedback loop)
+  # is always treated as real field measurements.
+  feedback_source: feedback
+  default_mode: proxy
+
+warning:
+  banner: "PROXY/SIMULATED MODEL — NOT YET FIELD VALIDATED"
+  subtext: >
+    This model was trained on prototype labels synthesised from mass-balance
+    calculations, not on verified field measurements. Treat every score as an
+    un-validated estimate until real harvest/weather outcomes are captured and
+    the model is re-trained in field-data mode.
+
+labels:
+  harvest_readiness:
+    enabled: true
+    mode: auto            # auto | field | proxy
+    target_column: harvest_readiness
+    class_column: null
+    proxy:
+      density_base_be: 24.0      # readiness starts to climb at den-24 >= 0
+      density_span_be: 4.0       # full density signal at den >= 28
+      target_thickness_mm: 15.0  # harvest target bed thickness
+      density_weight: 0.5
+      thickness_weight: 0.5
+      recent_rain_penalty_days: 5
+      recent_rain_penalty_floor: 0.65
+      recent_rain_penalty_slope: 0.35
+    leakage_features: [brine_density_be, salt_thickness_mm, days_since_last_rain]
+
+  climate_risk:
+    enabled: true
+    mode: auto
+    target_column: climate_risk
+    class_column: climate_risk_class   # low | medium | high
+    proxy:
+      intercept: 0.04
+      rain_weight: 0.55
+      rain_reference_mm: 80.0          # forecast rain saturating the risk term
+      exposure_target_mm: 15.0         # salt-bed exposure reference (harvest target)
+      exposure_weight: 0.26
+      density_weight: 0.12
+      density_start_be: 20.0
+      density_span_be: 8.0
+      class_low_max: 0.33
+      class_medium_max: 0.66
+    leakage_features: [precipitation_7d_forecast_mm, salt_thickness_mm, brine_density_be]
+
+  days_to_harvest:
+    enabled: true
+    mode: auto
+    target_column: days_to_harvest
+    class_column: null
+    proxy:
+      deposition_start_be: 25.0       # crystallisation zone begins
+      deposition_sat_be: 28.0        # saturated-bed deposition scaling
+      deposit_salt_per_evap_mm: 0.20  # mm salt gained per mm brine evaporated
+      target_thickness_mm: 15.0       # harvest target bed thickness
+      evap_min_gain_mm_per_day: 0.02  # below this the estimate is treated as NULL
+      rain_setback_mm_per_day: 20.0   # each 20 mm forecast rain adds 1 day
+      rain_setback_max_days: 10.0
+    leakage_features: [brine_density_be, salt_thickness_mm, temperature_c,
+                       humidity_pct, wind_speed_kmh, sunshine_hours]
+
+  yield_loss:
+    enabled: true
+    mode: auto
+    target_column: yield_loss_pct
+    class_column: null
+    proxy:
+      dissolution_per_rain_mm: 0.012  # mm bed dissolved per productive mm rain
+      productive_rain_max_depth_cm: 3.0
+      productive_rain_floor: 0.3
+    leakage_features: [precipitation_7d_forecast_mm, water_depth_cm, salt_thickness_mm]
+
+  recommended_action:
+    enabled: true
+    mode: auto
+    target_column: recommended_action
+    class_column: null
+    proxy:
+      harvest_now_risk_min: 0.65
+      harvest_now_readiness_min: 0.55
+      harvest_soon_readiness_min: 0.55
+      protect_risk_min: 0.55
+      protect_rain_mm_min: 10.0
+      evaporate_risk_max: 0.6
+      pump_density_max_be: 18.0
+      pump_depth_min_cm: 8.0
+      store_rain_mm_min: 8.0
+      store_density_min_be: 18.0
+      store_density_max_be: 28.0
+      rain_arrival_mm_min: 0.5
+    leakage_features: [harvest_readiness, climate_risk]
+
+leakage:
+  note: >
+    Labels listed below were computed DIRECTLY from the same physical
+    measurements used as model features. Accuracy metrics reported against
+    those features therefore measure formula self-consistency, not independent
+    field performance. Field-labelled data is required to credibly report
+    model accuracy against these columns.
+
+output:
+  methodology_file: docs/proxy_label_methodology.md

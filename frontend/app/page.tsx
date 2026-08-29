@@ -30,6 +30,25 @@ const tabs = [
 
 type TabKey = (typeof tabs)[number]["key"];
 
+function ProxyWarningBanner() {
+  const { data: status } = useQuery({
+    queryKey: ["label-status"],
+    queryFn: api.modelLabelStatus,
+    refetchInterval: 30_000,
+  });
+  if (!status || !status.any_active_proxy) return null;
+  return (
+    <div className="sticky top-[52px] z-10 border-b border-amber-500/40 bg-amber-500/15 px-4 py-2 backdrop-blur">
+      <p className="mx-auto max-w-7xl text-center text-xs font-bold tracking-wide text-amber-200">
+        PROXY/SIMULATED MODEL — NOT YET FIELD VALIDATED
+      </p>
+      <p className="mx-auto max-w-7xl text-center text-[11px] text-amber-200/70">
+        {status.subtext}
+      </p>
+    </div>
+  );
+}
+
 function TopBar() {
   const { data: status, isLoading } = useQuery({
     queryKey: ["status"],
@@ -108,6 +127,7 @@ export default function Home() {
   return (
     <div className="min-h-screen">
       <TopBar />
+      <ProxyWarningBanner />
       <main className="mx-auto max-w-7xl px-4 pb-24 pt-4">
         <KpiStrip />
         <nav className="mt-6 flex flex-wrap gap-1.5 border-b border-white/10 pb-3">

@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import DataSet, HarvestOutcome, Pan, Prediction, Recommendation
+from app.models import DataSet, HarvestOutcome, ModelVersion, Pan, Prediction, Recommendation
 from app.services.digital_twin import apply_outcome_to_twin, get_twin_state, record_state
 
 RAIN_RISK_THRESHOLD_MM = 15.0
@@ -123,6 +123,16 @@ def evaluation_summary(db: Session) -> dict:
     for (s,) in db.query(Recommendation.status).all():
         rec_counts[s] = rec_counts.get(s, 0) + 1
 
+    active_models = db.query(ModelVersion).all()
+    proxy_in_use = any(m.uses_proxy_labels for m in active_models)
+    proxy_note = (
+        "At least one active model was trained on PROXY/SIMULATED labels "
+        "(uses_proxy_labels=true). Accuracy reported here is prototype-only and "
+        "must not be presented as field-validated performance."
+        if proxy_in_use else
+        "Active models were trained on real field labels (uses_proxy_labels=false)."
+    )
+
     return {
         "total_outcomes": len(rows),
         "verified_outcomes": sum(1 for r in rows if r["verified"]),
@@ -133,6 +143,8 @@ def evaluation_summary(db: Session) -> dict:
         "harvest_delay_mean_days": None,
         "recommendations": rec_counts,
         "by_prediction_type": by_type,
+        "proxy_labels_in_use": proxy_in_use,
+        "proxy_note": proxy_note,
     }
 
 

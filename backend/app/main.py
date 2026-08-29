@@ -104,6 +104,7 @@ def system_status(db: Session = Depends(get_db)):
             "version": m.version if m else None,
             "metrics": m.metrics_json if m else {},
             "rows_trained": m.training_rows if m else 0,
+            "uses_proxy_labels": bool(m.uses_proxy_labels) if m else True,
         }
     return {
         "seeded": seeded,

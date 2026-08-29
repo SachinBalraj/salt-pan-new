@@ -96,6 +96,7 @@ def train_model(
     dataset_id: Optional[int],
     models_dir: Path,
     seed: int = 42,
+    labels_report: Optional[dict] = None,
 ) -> dict:
     if kind not in FEATURE_COLUMNS:
         raise ValueError(f"Unknown model kind '{kind}'. Use one of {list(FEATURE_COLUMNS)}")
@@ -134,6 +135,12 @@ def train_model(
         "shap_importance": importance,
         "rows_trained": int(len(X)),
     }
+    if labels_report:
+        uses = labels_report.get("uses_proxy_labels_by_kind") or {}
+        meta["uses_proxy_labels"] = bool(uses.get(kind, True))
+        meta["label_sources"] = {
+            k: v.get("source") for k, v in (labels_report.get("labels") or {}).items()
+        }
     meta_path = Path(artifact["path"]).with_suffix(".meta.json")
     meta_path.write_text(json.dumps(meta, indent=2))
 
@@ -148,6 +155,7 @@ def train_model(
         "shap_importance": importance,
         "dataset_id": dataset_id,
         "model_name": KIND_NAMES.get(kind, kind),
+        "uses_proxy_labels": bool((labels_report or {}).get("uses_proxy_labels_by_kind", {}).get(kind, True)),
     }
 
 

@@ -10,6 +10,7 @@ export interface SystemStatus {
       version: number | null;
       metrics: ModelMetrics;
       rows_trained: number;
+      uses_proxy_labels: boolean;
     }
   >;
   datasets: number;
@@ -163,7 +164,17 @@ export interface MlModel {
   metrics: ModelMetrics;
   rows_trained: number;
   dataset_id: number | null;
+  uses_proxy_labels?: boolean;
   created_at: string;
+}
+
+export interface LabelStatus {
+  banner: string;
+  subtext: string;
+  any_active_proxy: boolean;
+  models: Record<string, boolean>;
+  config_file: string;
+  methodology_file: string;
 }
 
 export interface ForecastDay {
@@ -320,6 +331,8 @@ export interface EvaluationSummary {
   harvest_delay_mean_days: number | null;
   recommendations: Record<string, number>;
   by_prediction_type: Record<string, number>;
+  proxy_labels_in_use?: boolean;
+  proxy_note?: string;
 }
 
 export interface FeedbackResult {
