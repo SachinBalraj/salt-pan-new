@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from app.models import SaltPan, Prediction
 from app.services.digital_twin import normalise_state, progress_to_harvest
 
 
@@ -14,18 +13,27 @@ def _top_shap_text(shap_values: Optional[Dict[str, float]], kind: str, n: int = 
     return f"model inputs driving {kind}: " + ", ".join(parts)
 
 
+def _confidence(readiness: float, risk: float) -> int:
+    conf = 0.5 + readiness - max(0.0, risk)
+    return int(round(max(35, min(97, conf * 100))))
+
+
 def generate_recommendations(
-    pan: SaltPan,
+    state: dict,
     timeline: List[dict],
     shap: Optional[Dict[str, Dict[str, float]]] = None,
-    prediction: Optional[Prediction] = None,
+    prediction: object = None,
     rainfall_mm_override: Optional[float] = None,
 ) -> List[dict]:
-    """Rule-based decision support on top of ML scores, written for farmers."""
+    """Rule-based decision support on top of ML scores, written for farmers.
+
+    Returns structured recommendation dicts with `reasons` and `instructions`
+    lists (the normalized payload) plus legacy display fields.
+    """
     if not timeline:
         return []
-    state = normalise_state(pan.twin_state)
-    progress = progress_to_harvest(pan)
+    st = normalise_state(state)
+    progress = progress_to_harvest(state)
 
     day0 = timeline[0]
     readiness0 = float(day0["readiness"])
@@ -37,128 +45,180 @@ def generate_recommendations(
     rain_arrives = next((p for p in timeline if p["rainfall_mm"] > 0.5), None)
     harvest_setback = max(0.0, readiness0 - min_readiness)
 
-    den = state["brine_density_be"]
-    thick = state["salt_thickness_mm"]
-    depth = state["water_depth_cm"]
+    den = st["brine_density_be"]
+    thick = st["salt_thickness_mm"]
+    depth = st["water_depth_cm"]
+    est_mass = int(st.get("estimated_salt_mass_kg") or 0)
     shap_ready = (shap or {}).get("harvest_readiness") or {}
     shap_risk = (shap or {}).get("climate_risk") or {}
 
+    def base(code: str, title: str, risk_level: str, priority: int) -> dict:
+        return {
+            "recommendation_type": code,
+            "title": title,
+            "risk_level": risk_level,
+            "priority": priority,
+            "confidence_pct": _confidence(readiness0, max_risk),
+            "reasons": [],
+            "instructions": [],
+        }
+
     recs: List[dict] = []
+    shap_ready_text = _top_shap_text(shap_ready, "harvest readiness")
+    shap_risk_text = _top_shap_text(shap_risk, "climate risk")
 
     # 1) Harvest now because high risk + ready crop
     if max_risk > 0.65 and readiness0 >= 0.55:
-        recs.append({
-            "recommendation_type": "harvest_now",
-            "title": "Harvest now before the rain",
-            "message": (
-                f"Your salt bed is {int(readiness0 * 100)}% harvest-ready but climate risk peaks at "
-                f"{int(max_risk * 100)}% on {max_risk_day['date']} ({max_risk_day['rainfall_mm']} mm forecast). "
-                f"Harvesting now protects the crop; rain would dissolve up to "
-                f"{int(thick * 0.5)} mm of the ~{thick} mm layer."
-            ),
-            "rationale": f"Risk on {max_risk_day['date']} exceeds the safe threshold while readiness is high. " +
-                         _top_shap_text(shap_risk, "climate risk") + ". " +
-                         _top_shap_text(shap_ready, "harvest readiness"),
-            "expected_benefit": f"Protects up to {int(state.get('estimated_salt_mass_kg', 0))} kg of salt",
-            "risk_level": "high",
-            "priority": 1,
-        })
+        r = base("harvest_now", "Harvest now before the rain", "high", 1)
+        r["reasons"] = [
+            f"Your salt bed is {int(readiness0 * 100)}% harvest-ready but climate risk peaks at "
+            f"{int(max_risk * 100)}% on {max_risk_day['date']} "
+            f"({max_risk_day['rainfall_mm']} mm forecast).",
+            f"Rain on {max_risk_day['date']} would dissolve up to {int(thick * 0.5)} mm of the "
+            f"~{thick} mm salt layer.",
+            shap_risk_text or shap_ready_text or "Decision thresholds from the climate-risk model.",
+        ]
+        r["instructions"] = [
+            f"Harvest today or before {max_risk_day['date']}.",
+            "Mobilise labour and transport immediately.",
+            "Move harvested salt under cover before the rain arrives.",
+        ]
+        r["expected_benefit"] = f"Protects up to {est_mass} kg of salt"
+        r["message"] = (
+            f"Harvest now: readiness {int(readiness0 * 100)}%, peak risk {int(max_risk * 100)}% "
+            f"on {max_risk_day['date']}. Rain on the bed dissolves the {thick} mm layer."
+        )
+        recs.append(r)
 
     # 2) Schedule soon (readiness high, risk moderate/low)
     elif readiness0 >= 0.55:
-        recs.append({
-            "recommendation_type": "harvest_soon",
-            "title": "Schedule harvest in the next 1–2 days",
-            "message": (
-                f"Readiness is {int(readiness0 * 100)}% and the 7-day risk window stays at "
-                f"{int(max_risk * 100)}%. This is a good harvest window - organise labour and "
-                f"transport for the next clear days."
-            ),
-            "rationale": _top_shap_text(shap_ready, "harvest readiness"),
-            "expected_benefit": "Captures the crop before events push readiness down by "
-                                f"{int(harvest_setback * 100)}%",
-            "risk_level": "medium",
-            "priority": 2,
-        })
+        r = base("harvest_soon", "Schedule harvest in the next 1-2 days", "medium", 2)
+        r["reasons"] = [
+            f"Readiness is {int(readiness0 * 100)}% with the 7-day risk window peaking at "
+            f"{int(max_risk * 100)}%.",
+            "This is a good harvest window; labour and transport should be organised now.",
+            shap_ready_text or "Crop maturity is within the harvest band.",
+        ]
+        r["instructions"] = [
+            "Plan the harvest for the next clear, dry day.",
+            "Line up labour, baskets and transport in advance.",
+            "Re-check the forecast each morning before cutting.",
+        ]
+        r["expected_benefit"] = f"Captures the crop before events push readiness down by {int(harvest_setback * 100)}%"
+        r["message"] = (
+            f"Schedule harvest in the next 1-2 days: readiness {int(readiness0 * 100)}%, "
+            f"peak risk {int(max_risk * 100)}%."
+        )
+        recs.append(r)
 
     # 3) Heavy rain days ahead / protection needed
     if max_risk > 0.55 or (rain_arrives and rain_arrives["rainfall_mm"] > 10):
         rain_day = max_rain_day
-        recs.append({
-            "recommendation_type": "protect_pan",
-            "title": "Protect the pan from incoming rain",
-            "message": (
-                f"{rain_day['rainfall_mm']} mm rain is forecast on {rain_day['date']}. "
-                f"Cover any harvested stockpiles with tarpaulin, open drain outlets so rainwater "
-                f"leaves quickly, and stop adding brine to the crystallising beds until it passes."
-            ),
-            "rationale": f"Forecast rainfall of {rain_day['rainfall_mm']} mm on {rain_day['date']} driving risk to "
-                         f"{int(max_risk * 100)}%. " + _top_shap_text(shap_risk, "climate risk"),
-            "expected_benefit": "Prevents dilution and re-dissolution of the salt layer",
-            "risk_level": "high" if max_risk > 0.65 else "medium",
-            "priority": 3,
-        })
+        r = base("protect_pan", "Protect the pan from incoming rain",
+                 "high" if max_risk > 0.65 else "medium", 3)
+        r["reasons"] = [
+            f"{rain_day['rainfall_mm']} mm rain is forecast on {rain_day['date']}.",
+            f"Forecast rain drives climate risk to {int(max_risk * 100)}%.",
+            shap_risk_text or "Rain is the top driver of salt-bed loss this cycle.",
+        ]
+        r["instructions"] = [
+            "Cover harvested stockpiles with tarpaulin.",
+            "Open drain outlets so rainwater leaves the beds quickly.",
+            "Stop adding brine to crystallising beds until the event passes.",
+        ]
+        r["expected_benefit"] = "Prevents dilution and re-dissolution of the salt layer"
+        r["message"] = (
+            f"Protect the pan from incoming rain: {rain_day['rainfall_mm']} mm on {rain_day['date']} "
+            f"(risk {int(max_risk * 100)}%)."
+        )
+        recs.append(r)
 
     # 4) Not yet ready - keep crystallising
     if readiness0 < 0.55 and risk0 < 0.6:
-        recs.append({
-            "recommendation_type": "continue_evaporation",
-            "title": "Keep the brine crystallising",
-            "message": (
-                f"The bed is at {int(readiness0 * 100)}% readiness (density {den}°Bé, "
-                f"thickness {thick} mm). Keep brine shallow and let evaporation continue; "
-                f"re-check density daily. No rain action needed for now."
-            ),
-            "rationale": f"Readiness beneath target. " + _top_shap_text(shap_ready, "harvest readiness"),
-            "expected_benefit": f"Gains roughly {max(0.0, 100 - int(readiness0 * 100))}% toward harvest maturity",
-            "risk_level": "low",
-            "priority": 4,
-        })
+        r = base("continue_evaporation", "Keep the brine crystallising", "low", 4)
+        r["reasons"] = [
+            f"The bed is at {int(readiness0 * 100)}% readiness "
+            f"(density {den}°Bé, thickness {thick} mm).",
+            "No rain action is required in the current window.",
+            shap_ready_text or "Evaporation continues to thicken the salt layer.",
+        ]
+        r["instructions"] = [
+            "Keep brine shallow and let evaporation continue.",
+            "Re-check density daily.",
+            "Re-run the forecast when the weather changes.",
+        ]
+        r["expected_benefit"] = f"Gains roughly {max(0, 100 - int(readiness0 * 100))}% toward harvest maturity"
+        r["message"] = (
+            f"Keep the brine crystallising: readiness {int(readiness0 * 100)}% "
+            f"at {den}°Bé / {thick} mm."
+        )
+        recs.append(r)
 
     # 5) Dilute water sitting on top - pump it off
     if den < 18 and depth > 8 and readiness0 < 0.5 and risk0 < 0.6:
-        recs.append({
-            "recommendation_type": "pump_excess",
-            "title": "Pump away the dilute top water",
-            "message": (
-                f"Brine density is only {den}°Bé at {depth} cm depth. Pump the diluted surface water "
-                f"into the reserve condensers so evaporation can concentrate what remains."
-            ),
-            "rationale": "Low brine density means evaporation is barely crystallising any salt.",
-            "expected_benefit": "Faster climb to the ≥25°Bé crystallisation zone",
-            "risk_level": "low",
-            "priority": 5,
-        })
+        r = base("pump_excess", "Pump away the dilute top water", "low", 5)
+        r["reasons"] = [
+            f"Brine density is only {den}°Bé at {depth} cm depth.",
+            "Low density means evaporation is barely crystallising any salt.",
+            "The dilute layer sits above the denser brine where salt forms.",
+        ]
+        r["instructions"] = [
+            "Pump the diluted surface water into the reserve condensers.",
+            "Let evaporation concentrate what remains.",
+            "Monitor density daily until the crystallisation zone (>= 25°Bé).",
+        ]
+        r["expected_benefit"] = "Faster climb to the >=25°Bé crystallisation zone"
+        r["message"] = f"Pump away the dilute top water: density {den}°Bé at {depth} cm depth."
+        recs.append(r)
 
     # 6) Save concentrated brine before rain
     if rain_arrives and rain_arrives["rainfall_mm"] > 8 and 18 <= den < 28:
-        recs.append({
-            "recommendation_type": "store_brine",
-            "title": "Store the concentrated brine before the rain",
-            "message": (
-                f"{rain_arrives['rainfall_mm']} mm is expected on {rain_arrives['date']}. "
-                f"Transfer the {den}°Bé mother brine into covered reserve beds so the storm "
-                f"cannot dilute the weeks of concentration you already paid for."
-            ),
-            "rationale": "Rain-related dilution is the main source of recovered-work loss.",
-            "expected_benefit": f"Protects ~{int(depth * den)} degree-cm of brine work",
-            "risk_level": "medium",
-            "priority": 6,
-        })
+        r = base("store_brine", "Store the concentrated brine before the rain", "medium", 6)
+        r["reasons"] = [
+            f"{rain_arrives['rainfall_mm']} mm is expected on {rain_arrives['date']}.",
+            f"The mother brine is {den}°Bé and would be diluted by the storm.",
+            "Rain dilution is the main source of recovered-work loss.",
+        ]
+        r["instructions"] = [
+            "Transfer the mother brine into covered reserve beds.",
+            "Fill reserve capacity before the storm arrives.",
+            "Return the brine to the crystallisers after the event.",
+        ]
+        r["expected_benefit"] = f"Protects ~{int(depth * den)} degree-cm of brine work"
+        r["message"] = (
+            f"Store the concentrated brine before the rain: {rain_arrives['rainfall_mm']} mm on "
+            f"{rain_arrives['date']}, brine {den}°Bé."
+        )
+        recs.append(r)
 
     if not recs:
-        recs.append({
-            "recommendation_type": "monitor",
-            "title": "Pan is on track — keep monitoring",
-            "message": (
-                f"Readiness {int(readiness0 * 100)}%, risk {int(max_risk * 100)}% over the horizon. "
-                f"No urgent action needed; refresh the forecast daily."
-            ),
-            "rationale": _top_shap_text(shap_ready, "harvest readiness"),
-            "expected_benefit": "Stay ahead of sudden weather changes",
-            "risk_level": "low",
-            "priority": 7,
-        })
+        r = base("monitor", "Pan is on track - keep monitoring", "low", 7)
+        r["reasons"] = [
+            f"Readiness is {int(readiness0 * 100)}% and risk {int(max_risk * 100)}% across the horizon.",
+            "No urgent action is needed.",
+            shap_ready_text or "Conditions are within the safe operating envelope.",
+        ]
+        r["instructions"] = [
+            "Keep refreshing the forecast daily.",
+            "Continue standard crystallisation checks.",
+            "Review the twin state again next shift.",
+        ]
+        r["expected_benefit"] = "Stay ahead of sudden weather changes"
+        r["message"] = (
+            f"Pan is on track: readiness {int(readiness0 * 100)}%, "
+            f"risk {int(max_risk * 100)}%."
+        )
+        recs.append(r)
+
+    for rec in recs:
+        while len(rec["reasons"]) < 3:
+            rec["reasons"].append("")
+        while len(rec["instructions"]) < 3:
+            rec["instructions"].append("")
+        rec["rationale"] = ". ".join(x for x in rec["reasons"] if x)
+        rec["reason_1"], rec["reason_2"], rec["reason_3"] = (rec["reasons"] + [""] * 3)[:3]
+        rec["instruction_1"], rec["instruction_2"], rec["instruction_3"] = (
+            rec["instructions"] + [""] * 3)[:3]
 
     recs.sort(key=lambda r: r["priority"])
     return recs

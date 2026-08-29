@@ -9,9 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import Prediction, SaltPan, WeatherForecast
+from app.models import Pan, Prediction
 from app.schemas import SimulationRequest
+from app.services.digital_twin import get_twin_state, record_state
 from app.services.predictor import scored_timeline
+from app.services.serializers import make_prediction_row
 from app.services.weather_provider import weather_provider
 
 router = APIRouter(prefix="/api/simulations", tags=["simulations"])
@@ -19,29 +21,26 @@ router = APIRouter(prefix="/api/simulations", tags=["simulations"])
 SALT_BULK_KG_M3 = 1200.0
 
 
-def _forecast_days(db: Session, pan: SaltPan, days: int) -> tuple:
+def _forecast_days(db: Session, pan: Pan, days: int) -> tuple:
     from app.routers.predictions import coherent_forecast
 
+    state = get_twin_state(db, pan)
     data = coherent_forecast(db, pan, days)
-    src = "mock" if pan.twin_state.get("demo_today") else "open_meteo/mock"
+    src = "mock" if state.get("demo_today") else "open_meteo/mock"
     return data, src
 
 
 def _models(db: Session, settings):
-    from app.ml.model_store import load_model
-    from app.routers.predictions import latest_model
+    from app.routers.predictions import load_models
 
-    models = {}
-    for kind in ("harvest_readiness", "climate_risk"):
-        m = latest_model(db, kind)
-        models[kind] = load_model(kind, settings.models_path, version=m.version)["model"]
+    models, _ = load_models(db, settings)
     return models
 
 
 @router.post("/what-if-rain")
 def what_if_rain(body: SimulationRequest, db: Session = Depends(get_db)):
     settings = get_settings()
-    pan = db.get(SaltPan, body.pan_id)
+    pan = db.get(Pan, body.pan_id)
     if not pan:
         raise HTTPException(404, "Salt pan not found")
 
@@ -54,10 +53,11 @@ def what_if_rain(body: SimulationRequest, db: Session = Depends(get_db)):
         dry_days_after=body.scenario.dry_days_after,
     )
     models = _models(db, settings)
-    start_date = pan.twin_state.get("demo_today") or dt.date.today().isoformat()
+    state = get_twin_state(db, pan)
+    start_date = state.get("demo_today") or dt.date.today().isoformat()
 
-    baseline = scored_timeline(pan, forecast_days, models, start_date=start_date)
-    rain_timeline = scored_timeline(pan, rain_days, models, start_date=start_date)
+    baseline = scored_timeline(state, forecast_days, models, start_date=start_date)
+    rain_timeline = scored_timeline(state, rain_days, models, start_date=start_date)
 
     # ---- impact analysis ------------------------------------------------
     event_idx = min(body.scenario.day_offset, horizon - 1)
@@ -105,22 +105,22 @@ def what_if_rain(body: SimulationRequest, db: Session = Depends(get_db)):
     }
 
     # Persist the rain scenario as an auditable prediction.
-    db.add(Prediction(
-        pan_id=pan.id,
-        prediction_type="combined",
-        scenario="rain_simulation",
-        score=float(rain_timeline[0]["readiness"]),
-        horizon_days=horizon,
-        prediction_date=dt.date.today().isoformat(),
-        forecast_date=start_date,
-        features={**impact},
+    pred = make_prediction_row(
+        db, pan,
+        state=state,
         series=rain_timeline,
-    ))
+        models=models,
+        shap={},
+        scenario="rain_simulation",
+        horizon_days=horizon,
+        proj_yield=max(0.0, float(state.get("estimated_salt_mass_kg") or 0.0) - yield_loss_kg),
+    )
+    db.add(pred)
     db.commit()
 
     return {
         "pan_id": pan.id,
-        "pan_ref": pan.pan_id,
+        "pan_ref": pan.pan_code,
         "scenario_name": f"What if {body.scenario.rainfall_mm} mm rain on day "
                          f"{body.scenario.day_offset + 1}?",
         "forecast_source": source,

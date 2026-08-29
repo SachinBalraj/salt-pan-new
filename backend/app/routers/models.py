@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import DataSet, MLModel
+from app.models import DataSet, ModelVersion
 from app.schemas import ModelOut, TrainRequest
+from app.services.serializers import model_to_dict
 from app.services.training import train_model
 
 router = APIRouter(prefix="/api/models", tags=["ml models"])
@@ -19,27 +20,29 @@ router = APIRouter(prefix="/api/models", tags=["ml models"])
 
 @router.get("", response_model=List[ModelOut])
 def list_models(db: Session = Depends(get_db)):
-    return db.query(MLModel).order_by(MLModel.created_at.desc()).all()
+    return [model_to_dict(m) for m in db.query(ModelVersion)
+            .order_by(ModelVersion.created_at.desc()).all()]
 
 
 @router.get("/{model_id}", response_model=ModelOut)
 def get_model(model_id: int, db: Session = Depends(get_db)):
-    m = db.get(MLModel, model_id)
+    m = db.get(ModelVersion, model_id)
     if not m:
         raise HTTPException(404, "Model not found")
-    return m
+    return model_to_dict(m)
 
 
 @router.get("/{model_id}/shap")
 def model_shap(model_id: int, db: Session = Depends(get_db)):
-    m = db.get(MLModel, model_id)
+    m = db.get(ModelVersion, model_id)
     if not m:
         raise HTTPException(404, "Model not found")
-    meta_path = Path(m.artifact_path).with_suffix(".meta.json") if m.artifact_path else None
+    meta_path = Path(m.model_path).with_suffix(".meta.json") if m.model_path else None
     if meta_path and meta_path.exists():
         meta = json.loads(meta_path.read_text())
-        return {"model_id": m.id, "kind": m.kind, "shap_importance": meta.get("shap_importance", [])}
-    return {"model_id": m.id, "kind": m.kind, "shap_importance": []}
+        return {"model_id": m.id, "kind": m.model_type,
+                "shap_importance": meta.get("shap_importance", [])}
+    return {"model_id": m.id, "kind": m.model_type, "shap_importance": []}
 
 
 @router.post("/train", response_model=List[ModelOut], status_code=201)
@@ -65,26 +68,26 @@ def train(body: TrainRequest, db: Session = Depends(get_db)):
             raise HTTPException(400, "No dataset available. Upload one or re-seed the demo.")
         df = pd.read_csv(ds.filepath)
 
-    created: List[MLModel] = []
+    created: List[ModelVersion] = []
     for kind in kinds:
         try:
             trained = train_model(kind, df, ds.id, settings.models_path)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        m = MLModel(
-            name=trained["model_name"],
-            kind=kind,
+        mv = ModelVersion(
+            model_name=trained["model_name"],
+            model_type=kind,
             version=trained["version"],
-            status="trained",
-            artifact_path=trained["artifact_path"],
-            feature_names=trained["feature_names"],
-            metrics=trained["metrics"],
-            rows_trained=trained["rows_trained"],
-            dataset_id=ds.id,
+            model_path=trained["artifact_path"],
+            training_rows=int(trained["rows_trained"]),
+            metrics_json=trained["metrics"],
+            feature_names_json=trained["feature_names"],
+            uses_proxy_labels=True,
+            active=True,
         )
-        db.add(m)
-        created.append(m)
+        db.add(mv)
+        created.append(mv)
     db.commit()
     for m in created:
         db.refresh(m)
-    return created
+    return [model_to_dict(m) for m in created]

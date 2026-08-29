@@ -10,13 +10,15 @@ from app.config import get_settings
 from app.database import Base, engine, get_db
 from app.models import (  # noqa: F401  (register models)
     DataSet,
-    MLModel,
-    Outcome,
+    DigitalTwinState,
+    HarvestOutcome,
+    ModelVersion,
+    OperationEvent,
+    Pan,
     Prediction,
     Recommendation,
-    SaltPan,
-    TwinSnapshot,
-    WeatherForecast,
+    SensorReading,
+    WeatherReading,
 )
 from app.routers import (
     datasets,
@@ -86,22 +88,22 @@ def health():
 @app.get("/api/system/status", tags=["system"])
 def system_status(db: Session = Depends(get_db)):
     seeded = getattr(app.state, "seeded", False)
-    pans = db.query(SaltPan).count()
-    models_count = db.query(MLModel).count()
+    pans = db.query(Pan).count()
+    models_count = db.query(ModelVersion).count()
     datasets_count = db.query(DataSet).count()
     predictions_count = db.query(Prediction).count()
     recs = db.query(Recommendation).count()
-    outcomes_count = db.query(Outcome).count()
+    outcomes_count = db.query(HarvestOutcome).count()
     kind_status = {}
     for kind in ("harvest_readiness", "climate_risk"):
-        m = (db.query(MLModel).filter(MLModel.kind == kind)
-             .order_by(MLModel.created_at.desc()).first())
+        m = (db.query(ModelVersion).filter(ModelVersion.model_type == kind)
+             .order_by(ModelVersion.active.desc(), ModelVersion.created_at.desc()).first())
         kind_status[kind] = {
             "available": m is not None,
             "id": m.id if m else None,
             "version": m.version if m else None,
-            "metrics": m.metrics if m else {},
-            "rows_trained": m.rows_trained if m else 0,
+            "metrics": m.metrics_json if m else {},
+            "rows_trained": m.training_rows if m else 0,
         }
     return {
         "seeded": seeded,

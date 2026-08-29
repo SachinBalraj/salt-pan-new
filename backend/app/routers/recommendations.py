@@ -1,18 +1,61 @@
 from __future__ import annotations
 
 import datetime as dt
+import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Prediction, Recommendation, SaltPan
+from app.models import OperationEvent, Pan, Prediction, Recommendation
 from app.schemas import RecommendationOut, RespondRequest
-from app.services.predictor import day0_features, local_shap_values, scored_timeline
+from app.services.digital_twin import get_twin_state
 from app.services.recommendation_engine import generate_recommendations
+from app.services.serializers import (
+    make_prediction_row,
+    recommendation_to_dict,
+)
 
 router = APIRouter(prefix="/api/recommendations", tags=["recommendations"])
+
+
+def _code(pan: Pan, action: str) -> str:
+    stamp = dt.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    return f"{action[:18]}-{pan.pan_code}-{stamp}-{uuid.uuid4().hex[:4]}"
+
+
+def _deadline(action: str, timeline: List[dict]) -> Optional[dt.datetime]:
+    if action == "harvest_now":
+        return dt.datetime.utcnow() + dt.timedelta(days=1)
+    if action in ("protect_pan", "store_brine"):
+        rain_day = max((p for p in timeline if p["rainfall_mm"] > 0.5),
+                       key=lambda p: p["rainfall_mm"], default=None)
+        if rain_day:
+            try:
+                return dt.datetime.fromisoformat(str(rain_day["date"]))
+            except ValueError:
+                pass
+    return dt.datetime.utcnow() + dt.timedelta(days=1)
+
+
+def _to_row(pan: Pan, pred: Prediction, rec: dict) -> Recommendation:
+    return Recommendation(
+        recommendation_code=_code(pan, rec["recommendation_type"]),
+        pan_id=pan.id,
+        prediction_id=pred.id,
+        timestamp=dt.datetime.utcnow(),
+        recommended_action=rec["recommendation_type"],
+        action_deadline=_deadline(rec["recommendation_type"], rec.get("_timeline") or []),
+        reason_1=rec.get("reason_1", ""),
+        reason_2=rec.get("reason_2", ""),
+        reason_3=rec.get("reason_3", ""),
+        instruction_1=rec.get("instruction_1", ""),
+        instruction_2=rec.get("instruction_2", ""),
+        instruction_3=rec.get("instruction_3", ""),
+        confidence_pct=rec.get("confidence_pct", 0.0),
+        status="pending",
+    )
 
 
 @router.get("", response_model=List[RecommendationOut])
@@ -23,64 +66,57 @@ def list_recommendations(pan_id: Optional[int] = None, status: Optional[str] = N
         q = q.filter(Recommendation.pan_id == pan_id)
     if status:
         q = q.filter(Recommendation.status == status)
-    return q.limit(200).all()
+    notes = {e.recommendation_id: e.operator_notes
+             for e in db.query(OperationEvent).filter(
+                 OperationEvent.event_type == "operator_response").all()}
+    out = []
+    for rec in q.limit(200).all():
+        out.append(recommendation_to_dict(rec, farmer_notes=notes.get(rec.id, "")))
+    return out
 
 
 @router.post("/generate", response_model=List[RecommendationOut], status_code=201)
 def generate(pan_id: int, db: Session = Depends(get_db)):
-    pan = db.get(SaltPan, pan_id)
+    pan = db.get(Pan, pan_id)
     if not pan:
         raise HTTPException(404, "Salt pan not found")
 
     from app.config import get_settings
-    from app.ml.model_store import load_model
-    from app.routers.predictions import latest_model, resolve_forecast
+    from app.routers.predictions import latest_model, load_models, resolve_forecast
 
     settings = get_settings()
+    state = get_twin_state(db, pan)
     forecast_days = resolve_forecast(db, pan, 7)
-    models = {}
-    for kind in ("harvest_readiness", "climate_risk"):
-        m = latest_model(db, kind)
-        models[kind] = load_model(kind, settings.models_path, version=m.version)["model"]
+    models, model_versions = load_models(db, settings)
 
-    start_date = pan.twin_state.get("demo_today") or dt.date.today().isoformat()
-    timeline = scored_timeline(pan, forecast_days, models, start_date=start_date)
-    shap = {}
-    for kind in ("harvest_readiness", "climate_risk"):
-        fd = day0_features(pan, forecast_days, kind)
-        shap[kind] = local_shap_values(models[kind], list(fd.values()), list(fd.keys()))
+    start_date = state.get("demo_today") or dt.date.today().isoformat()
+    from app.services.predictor import scored_timeline
 
-    pred = Prediction(
-        pan_id=pan.id,
-        prediction_type="combined",
-        scenario="actual_forecast",
-        score=float(timeline[0]["readiness"]),
-        horizon_days=7,
-        prediction_date=dt.date.today().isoformat(),
-        forecast_date=timeline[0]["date"],
-        features={**day0_features(pan, forecast_days, "harvest_readiness"),
-                  "projected_yield_kg": pan.twin_state.get("estimated_salt_mass_kg", 0) or 0},
-        shap_values=shap,
+    timeline = scored_timeline(state, forecast_days, models, start_date=start_date)
+
+    pred = make_prediction_row(
+        db, pan,
+        state=state,
         series=timeline,
+        models=models,
+        shap={},
+        scenario="actual_forecast",
+        horizon_days=7,
+        model_version=model_versions["harvest_readiness"],
     )
     db.add(pred)
     db.flush()
 
     output: List[Recommendation] = []
-    for rec in generate_recommendations(pan, timeline, shap=shap, prediction=pred)[:3]:
-        r = Recommendation(
-            pan_id=pan.id, prediction_id=pred.id,
-            recommendation_type=rec["recommendation_type"],
-            title=rec["title"], message=rec["message"],
-            rationale=rec["rationale"], expected_benefit=rec["expected_benefit"],
-            risk_level=rec["risk_level"],
-        )
+    for rec in generate_recommendations(state, timeline, shap=None, prediction=pred)[:3]:
+        rec["_timeline"] = timeline
+        r = _to_row(pan, pred, rec)
         db.add(r)
         output.append(r)
     db.commit()
     for r in output:
         db.refresh(r)
-    return output
+    return [recommendation_to_dict(r) for r in output]
 
 
 @router.post("/{rec_id}/respond", response_model=RecommendationOut)
@@ -91,8 +127,19 @@ def respond(rec_id: int, body: RespondRequest, db: Session = Depends(get_db)):
     if body.status not in ("accepted", "declined"):
         raise HTTPException(400, "status must be 'accepted' or 'declined'")
     rec.status = body.status
-    rec.farmer_notes = body.farmer_notes
-    rec.responded_at = dt.datetime.utcnow()
+    rec.operator_accepted = body.status == "accepted"
+    rec.operator_response_at = dt.datetime.utcnow()
+    db.add(OperationEvent(
+        pan_id=rec.pan_id,
+        recommendation_id=rec.id,
+        event_timestamp=dt.datetime.utcnow(),
+        event_type="operator_response",
+        operator_notes=body.farmer_notes,
+    ))
     db.commit()
     db.refresh(rec)
-    return rec
+    notes = (db.query(OperationEvent)
+             .filter(OperationEvent.recommendation_id == rec.id,
+                     OperationEvent.event_type == "operator_response")
+             .order_by(OperationEvent.created_at.desc()).first())
+    return recommendation_to_dict(rec, farmer_notes=notes.operator_notes if notes else "")

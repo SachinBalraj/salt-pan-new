@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 
 from app.ml.features import FEATURE_COLUMNS, features_dict
-from app.models import SaltPan
 from app.services.data_generator import advance_pan_state
 from app.services.digital_twin import normalise_state
 
@@ -30,7 +29,7 @@ def _mean_prob(days: List[dict], i: int, span: int) -> float:
 
 
 def scored_timeline(
-    pan: SaltPan,
+    state: dict,
     forecast_days: List[dict],
     models: Dict[str, object],  # {"harvest_readiness": model, "climate_risk": model}
     start_date: Optional[str] = None,
@@ -38,8 +37,8 @@ def scored_timeline(
     """Day-by-day readiness + risk over a forecast using twin physics + ML."""
     horizon = len(forecast_days)
     base = dt.date.fromisoformat(start_date) if start_date else dt.date.today()
-    rng = np.random.default_rng(horizon * 13 + pan.id)
-    state = normalise_state(pan.twin_state)
+    rng = np.random.default_rng(horizon * 13 + 7)
+    st = normalise_state(state)
     points: List[dict] = []
     for i, w in enumerate(forecast_days):
         w = dict(w)
@@ -103,8 +102,8 @@ def local_shap_values(model, feature_vector: List[float], feature_names: List[st
     return out
 
 
-def day0_features(pan: SaltPan, forecast_days: List[dict], kind: str) -> Dict[str, float]:
-    state = normalise_state(pan.twin_state)
+def day0_features(state: dict, forecast_days: List[dict], kind: str) -> Dict[str, float]:
+    st = normalise_state(state)
     w = dict(forecast_days[0])
     for k, v in list(w.items()):
         try:

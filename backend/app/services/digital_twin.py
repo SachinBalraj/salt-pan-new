@@ -4,12 +4,15 @@ import datetime as dt
 import math
 from typing import Dict, List, Optional
 
-from app.models import SaltPan
-from app.services.data_generator import (
-    SALT_BULK_DENSITY_KG_M3,
-    TARGET_THICKNESS_MM,
-    advance_pan_state,
-)
+from sqlalchemy.orm import Session
+
+from app.models import DigitalTwinState, Pan, WeatherReading
+from app.services.data_generator import SALT_BULK_DENSITY_KG_M3, TARGET_THICKNESS_MM, advance_pan_state
+
+
+# Legacy pan metadata carried inside the twin state JSON.
+PAN_META_KEYS = ("location", "status", "demo_today", "last_update", "demo_latitude", "demo_longitude")
+_SOURCE_KEY = "_source"
 
 
 def default_twin_state() -> dict:
@@ -39,7 +42,8 @@ def normalise_state(state: Optional[dict]) -> dict:
     except (TypeError, ValueError):
         merged["days_since_last_rain"] = 0
     merged["salt_thickness_mm"] = max(0.0, merged["salt_thickness_mm"])
-    merged["estimated_salt_mass_kg"] = salt_mass_kg(merged["salt_thickness_mm"], area_m2=None)
+    merged["estimated_salt_mass_kg"] = salt_mass_kg(
+        merged["salt_thickness_mm"], area_m2=merged.get("pan_area_m2"))
     return merged
 
 
@@ -48,8 +52,8 @@ def salt_mass_kg(thickness_mm: float, area_m2: Optional[float] = None) -> float:
     return round(thickness_mm / 1000.0 * SALT_BULK_DENSITY_KG_M3 * area, 1)
 
 
-def progress_to_harvest(pan: SaltPan) -> float:
-    st = normalise_state(pan.twin_state)
+def progress_to_harvest(state: dict) -> float:
+    st = normalise_state(state)
     den = st["brine_density_be"]
     thick = st["salt_thickness_mm"]
     den_p = max(0.0, min((den - 20.0) / 7.0, 1.0))
@@ -57,12 +61,12 @@ def progress_to_harvest(pan: SaltPan) -> float:
     return round(0.45 * den_p + 0.55 * thick_p, 3)
 
 
-def step_twin(pan: SaltPan, weather_day: dict, rng=None) -> dict:
-    """Advance a pan's digital twin by one simulated day."""
+def step_twin(state: dict, weather_day: dict, rng=None) -> dict:
+    """Advance a digital-twin state by one simulated day."""
     import numpy as np
 
     rng = rng or np.random.default_rng(0)
-    st = normalise_state(pan.twin_state)
+    st = normalise_state(state)
     weather = {
         "temperature_c": float(weather_day.get("temperature_c", 28.0)),
         "humidity_pct": float(weather_day.get("humidity_pct", 60.0)),
@@ -72,32 +76,152 @@ def step_twin(pan: SaltPan, weather_day: dict, rng=None) -> dict:
     }
     new_state = advance_pan_state(st, weather, 0.0, rng)
     new_state["estimated_salt_mass_kg"] = salt_mass_kg(new_state["salt_thickness_mm"],
-                                                       getattr(pan, "area_m2", None))
+                                                       st.get("pan_area_m2"))
     return normalise_state(new_state)
 
 
-def run_twin_timeline(pan: SaltPan, forecast_days: List[dict],
-                      start_date: Optional[str] = None) -> List[dict]:
+def run_twin_timeline(state: dict, forecast_days: List[dict],
+                      start_date: Optional[str] = None, seed: int = 7) -> List[dict]:
     """Project the twin state day-by-day over a forecast timeline."""
     import numpy as np
 
-    rng = np.random.default_rng(len(forecast_days) * 7 + pan.id)
+    rng = np.random.default_rng(seed)
     result: List[dict] = []
-    state = normalise_state(pan.twin_state)
+    st = normalise_state(state)
     base = dt.date.fromisoformat(start_date) if start_date else dt.date.today()
     for i, w in enumerate(forecast_days):
         day = base + dt.timedelta(days=i)
-        state = advance_pan_state(state, w, 0.0, rng)
-        snapshot = normalise_state(state)
+        st = advance_pan_state(st, w, 0.0, rng)
+        snapshot = normalise_state(st)
         snapshot["date"] = day.isoformat()
         snapshot["weather"] = w
         result.append(snapshot)
     return result
 
 
-def apply_outcome_to_twin(pan: SaltPan, outcome_data: dict) -> dict:
-    """Feed verified physical outcomes back into the digital twin's state."""
-    st = normalise_state(pan.twin_state)
+# ------------------------------------------------------------------ persistence
+
+def get_twin_state(db: Session, pan: Pan) -> dict:
+    row = (db.query(DigitalTwinState)
+           .filter(DigitalTwinState.pan_id == pan.id)
+           .order_by(DigitalTwinState.timestamp.desc())
+           .first())
+    if not row:
+        st = default_twin_state()
+        st["pan_area_m2"] = pan.area_m2
+        return st
+    return dict(row.state_json or {})
+
+
+def latest_forecast_days(db: Session, pan: Pan, days: int = 7) -> List[dict]:
+    """Reconstruct provider-style day dicts from the newest forecast batch."""
+    rows = (db.query(WeatherReading)
+            .filter(WeatherReading.pan_id == pan.id)
+            .order_by(WeatherReading.forecast_generated_at.desc())
+            .all())
+    if not rows:
+        return []
+    latest_at = rows[0].forecast_generated_at
+    batch = [r for r in rows if r.forecast_generated_at == latest_at]
+    batch.sort(key=lambda r: r.forecast_for or dt.date.max)
+    out: List[dict] = []
+    for r in batch:
+        out.append({
+            "date": r.forecast_for.isoformat() if r.forecast_for else "",
+            "temperature_c": r.temperature_c,
+            "humidity_pct": r.humidity_pct,
+            "wind_speed_kmh": round(r.wind_speed_ms * 3.6, 1),
+            "rainfall_mm": r.forecast_rain_mm,
+            "precipitation_probability_pct": r.rain_probability_pct,
+            "sunshine_hours": round(r.solar_radiation_wm2 / 100.0, 1),
+        })
+    return out[:days]
+
+
+def _derive_columns(state: dict, pan: Pan, forecast_days: List[dict]) -> dict:
+    st = normalise_state(state)
+    area = float(pan.area_m2 or 1000.0)
+    safe_depth = float(pan.safe_depth_cm or 12.0)
+    depth = st["water_depth_cm"]
+    den = st["brine_density_be"]
+
+    forecast_days = forecast_days or []
+    day0 = forecast_days[0] if forecast_days else {}
+    rain_mm_total = float(sum(d.get("rainfall_mm", 0.0) for d in forecast_days))
+    predicted_depth_after_rain_cm = round(depth + rain_mm_total / 10.0, 2)
+    den_after_rain = den * depth / max(predicted_depth_after_rain_cm, 0.1)
+    den_after_rain = max(0.0, min(den_after_rain, 30.0))
+
+    return {
+        "brine_volume_m3": round(depth / 100.0 * area, 2),
+        "estimated_salt_mass_kg": float(st.get("estimated_salt_mass_kg") or 0.0),
+        "evaporation_mm_day": round(float(evap_mm_day(day0)), 2),
+        "predicted_rain_volume_m3": round(rain_mm_total / 1000.0 * area, 2),
+        "predicted_depth_after_rain_cm": predicted_depth_after_rain_cm,
+        "predicted_salinity_after_rain_g_l": round(den_after_rain * 9.5, 1),
+        "overflow_risk": round(max(0.0, min(
+            (predicted_depth_after_rain_cm - safe_depth) / max(safe_depth, 0.1), 1.0)), 3),
+        "harvest_readiness": float(st.get("_harvest_readiness") or 0.0),
+        "climate_risk": float(st.get("_climate_risk") or 0.0),
+    }
+
+
+def evap_mm_day(day: dict) -> float:
+    from app.ml.features import evap_index
+
+    return evap_index(
+        float(day.get("temperature_c", 28.0)),
+        float(day.get("humidity_pct", 60.0)),
+        float(day.get("wind_speed_kmh", 10.0)),
+        float(day.get("sunshine_hours", 9.0)),
+        float(day.get("rainfall_mm", 0.0)),
+    )
+
+
+def record_state(db: Session, pan: Pan, state: dict,
+                 source: str = "manual", forecast_days: Optional[List[dict]] = None,
+                 readiness: Optional[float] = None, risk: Optional[float] = None) -> dict:
+    """Merge + normalise a twin state, persist a DigitalTwinState snapshot."""
+    base = default_twin_state()
+    latest = {**base, **(get_twin_state(db, pan) or {})}
+    st = {**latest, _SOURCE_KEY: source, "pan_area_m2": pan.area_m2}
+    st.update(state or {})
+    st = normalise_state(st)
+    if readiness is not None:
+        st["_harvest_readiness"] = round(float(readiness), 4)
+    if risk is not None:
+        st["_climate_risk"] = round(float(risk), 4)
+    st["last_update"] = dt.date.today().isoformat()
+    if "location" not in st:
+        st["location"] = pan.name
+
+    forecast_days = forecast_days if forecast_days is not None else latest_forecast_days(db, pan)
+    derived = _derive_columns(st, pan, forecast_days)
+
+    row = DigitalTwinState(
+        pan_id=pan.id,
+        timestamp=dt.datetime.utcnow(),
+        brine_volume_m3=derived["brine_volume_m3"],
+        estimated_salt_mass_kg=derived["estimated_salt_mass_kg"],
+        evaporation_mm_day=derived["evaporation_mm_day"],
+        predicted_rain_volume_m3=derived["predicted_rain_volume_m3"],
+        predicted_depth_after_rain_cm=derived["predicted_depth_after_rain_cm"],
+        predicted_salinity_after_rain_g_l=derived["predicted_salinity_after_rain_g_l"],
+        harvest_readiness=derived["harvest_readiness"],
+        climate_risk=derived["climate_risk"],
+        overflow_risk=derived["overflow_risk"],
+        state_json=st,
+    )
+    db.add(row)
+    db.flush()
+    return st
+
+
+# ------------------------------------------------------------------ feedback
+
+def apply_outcome_to_twin(state: dict, outcome_data: dict) -> dict:
+    """Feed verified physical outcomes back into a twin's state dict."""
+    st = normalise_state(state)
     if outcome_data.get("actual_rainfall_mm"):
         rain = float(outcome_data["actual_rainfall_mm"])
         if rain > 1.0:
@@ -119,7 +243,8 @@ def apply_outcome_to_twin(pan: SaltPan, outcome_data: dict) -> dict:
         st["brine_density_be"] = float(outcome_data["brine_density_be"])
     if outcome_data.get("salt_thickness_mm") is not None:
         st["salt_thickness_mm"] = float(outcome_data["salt_thickness_mm"])
-    st["estimated_salt_mass_kg"] = salt_mass_kg(st["salt_thickness_mm"], pan.area_m2)
+    st["estimated_salt_mass_kg"] = salt_mass_kg(st["salt_thickness_mm"],
+                                                st.get("pan_area_m2"))
     return st
 
 
@@ -128,7 +253,6 @@ def horizon_summary(projection: List[dict]) -> dict:
     if not projection:
         return {}
     latest = projection[-1]
-    highs = max((p["climate_risk"] for p in projection), default=0.0) if "climate_risk" in projection[0] else None
     min_den = min((p["brine_density_be"] for p in projection), default=latest["brine_density_be"])
     min_den = min(min_den, latest["brine_density_be"])
     return {
