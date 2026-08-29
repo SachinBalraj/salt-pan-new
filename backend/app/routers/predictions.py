@@ -12,6 +12,7 @@ from app.database import get_db
 from app.models import ModelVersion, Pan, Prediction, WeatherReading
 from app.schemas import PredictRequest
 from app.services.digital_twin import get_twin_state, latest_forecast_days, record_state
+from app.services.explainability import build_explanation
 from app.services.predictor import day0_features, local_shap_values, scored_timeline
 from app.services.serializers import (
     make_prediction_row,
@@ -151,6 +152,7 @@ def run_prediction(body: PredictRequest, db: Session = Depends(get_db)):
         series=timeline,
         models=models,
         shap=shap,
+        explain=build_explanation(state, forecast_days, models, shap),
         scenario=body.scenario,
         horizon_days=body.horizon_days,
         model_version=model_versions["harvest_readiness"],

@@ -40,13 +40,21 @@ def _deadline(action: str, timeline: List[dict]) -> Optional[dt.datetime]:
 
 
 def _to_row(pan: Pan, pred: Prediction, rec: dict) -> Recommendation:
+    deadline = rec.get("action_deadline")
+    if deadline:
+        try:
+            deadline = dt.datetime.fromisoformat(str(deadline))
+        except ValueError:
+            deadline = _deadline(rec["recommendation_type"], rec.get("_timeline") or [])
+    else:
+        deadline = _deadline(rec["recommendation_type"], rec.get("_timeline") or [])
     return Recommendation(
         recommendation_code=_code(pan, rec["recommendation_type"]),
         pan_id=pan.id,
         prediction_id=pred.id,
         timestamp=dt.datetime.utcnow(),
         recommended_action=rec["recommendation_type"],
-        action_deadline=_deadline(rec["recommendation_type"], rec.get("_timeline") or []),
+        action_deadline=deadline,
         reason_1=rec.get("reason_1", ""),
         reason_2=rec.get("reason_2", ""),
         reason_3=rec.get("reason_3", ""),
@@ -54,6 +62,7 @@ def _to_row(pan: Pan, pred: Prediction, rec: dict) -> Recommendation:
         instruction_2=rec.get("instruction_2", ""),
         instruction_3=rec.get("instruction_3", ""),
         confidence_pct=rec.get("confidence_pct", 0.0),
+        consequence_if_waited=rec.get("consequence_if_waited", ""),
         status="pending",
     )
 

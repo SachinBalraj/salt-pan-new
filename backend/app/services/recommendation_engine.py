@@ -1,16 +1,65 @@
 from __future__ import annotations
 
+import datetime as dt
 from typing import Dict, List, Optional
 
 from app.services.digital_twin import normalise_state, progress_to_harvest
+from app.services.explainability import shap_top_factors
 
 
-def _top_shap_text(shap_values: Optional[Dict[str, float]], kind: str, n: int = 3) -> str:
-    if not shap_values:
+def _top_factors_text(shap_values: Optional[Dict[str, float]], kind: str, n: int = 2) -> str:
+    """Human-language version of the top SHAP drivers (no bare feature names)."""
+    factors = shap_top_factors(shap_values, n=n)
+    if not factors:
         return ""
-    items = sorted(shap_values.items(), key=lambda kv: abs(kv[1]), reverse=True)
-    parts = [f"{k} {('+' if v >= 0 else '')}{v:.2f}" for k, v in items[:n]]
-    return f"model inputs driving {kind}: " + ", ".join(parts)
+    join = "; ".join(f["explanation"] for f in factors)
+    return f"Top drivers of {kind}: {join}."
+
+
+def _deadline_iso(code: str, timeline: List[dict]) -> str:
+    if code in ("protect_pan", "store_brine"):
+        rain_day = max((p for p in timeline if p["rainfall_mm"] > 0.5),
+                       key=lambda p: p["rainfall_mm"], default=None)
+        if rain_day:
+            return str(rain_day["date"])
+    return (dt.date.today() + dt.timedelta(days=1)).isoformat()
+
+
+def _consequence_if_waited(code: str, st: dict, timeline: List[dict]) -> str:
+    den = st["brine_density_be"]
+    thick = st["salt_thickness_mm"]
+    depth = st["water_depth_cm"]
+    max_risk = max(float(p["risk"]) for p in timeline)
+    max_risk_day = max(timeline, key=lambda p: p["risk"])
+    rain_day = max((p for p in timeline if p["rainfall_mm"] > 0.5),
+                   key=lambda p: p["rainfall_mm"], default=None)
+    mm = rain_day["rainfall_mm"] if rain_day else 0.0
+    rain_date = rain_day["date"] if rain_day else max_risk_day["date"]
+
+    if code == "harvest_now":
+        return (f"If you wait past {rain_date}, the forecast {mm} mm of rain will "
+                f"wash and dissolve up to ~{int(thick * 0.5)} mm of the {thick} mm "
+                f"salt bed, shrinking the harvest and pushing it back by days.")
+    if code == "harvest_soon":
+        return (f"Delaying beyond the 1-2 day window risks catching the bed at "
+                f"{int(max_risk * 100)}% risk on {max_risk_day['date']}, when rain "
+                f"can re-dissolve part of the {thick} mm salt layer.")
+    if code == "protect_pan":
+        return (f"With no protection, the {mm} mm rain on {rain_date} will dilute "
+                f"the brine below the crystallisation range and re-dissolve part of "
+                f"the salt bed already on the crystallisers.")
+    if code == "continue_evaporation":
+        return (f"Nothing is at risk right now; delaying simply means the next "
+                f"weather check is postponed, leaving the bed open to a surprise "
+                f"storm.")
+    if code == "pump_excess":
+        return (f"Leaving the dilute {depth} cm layer on top slows the brine's climb "
+                f"toward 25°Bé and wastes evaporation effort on near-fresh water.")
+    if code == "store_brine":
+        return (f"Keeping the {den}°Bé mother brine in the open beds through the "
+                f"{mm} mm rain will dilute it and undo the concentration work done "
+                f"so far.")
+    return f"No imminent loss is expected; the main risk is missing a fast-changing forecast."
 
 
 def _confidence(readiness: float, risk: float) -> int:
@@ -64,8 +113,8 @@ def generate_recommendations(
         }
 
     recs: List[dict] = []
-    shap_ready_text = _top_shap_text(shap_ready, "harvest readiness")
-    shap_risk_text = _top_shap_text(shap_risk, "climate risk")
+    shap_ready_text = _top_factors_text(shap_ready, "harvest readiness")
+    shap_risk_text = _top_factors_text(shap_risk, "climate risk")
 
     # 1) Harvest now because high risk + ready crop
     if max_risk > 0.65 and readiness0 >= 0.55:
@@ -219,6 +268,9 @@ def generate_recommendations(
         rec["reason_1"], rec["reason_2"], rec["reason_3"] = (rec["reasons"] + [""] * 3)[:3]
         rec["instruction_1"], rec["instruction_2"], rec["instruction_3"] = (
             rec["instructions"] + [""] * 3)[:3]
+        rec["action_deadline"] = _deadline_iso(rec["recommendation_type"], timeline)
+        rec["consequence_if_waited"] = _consequence_if_waited(
+            rec["recommendation_type"], st, timeline)
 
     recs.sort(key=lambda r: r["priority"])
     return recs

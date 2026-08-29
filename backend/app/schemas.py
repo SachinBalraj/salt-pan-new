@@ -381,6 +381,11 @@ class RecommendationOut(ORMModel):
     farmer_notes: str
     created_at: datetime
     responded_at: Optional[datetime]
+    action_deadline: Optional[datetime] = None
+    confidence_pct: float = 0.0
+    reasons: List[str] = []
+    instructions: List[str] = []
+    consequence_if_waited: str = ""
 
 
 class RespondRequest(BaseModel):

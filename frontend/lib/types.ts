@@ -236,6 +236,26 @@ export interface SeriesPoint {
   risk: number;
 }
 
+export interface ExplainFactor {
+  feature: string;
+  contribution: number;
+  weight_pct: number;
+  explanation: string;
+}
+
+export interface ExplainContext {
+  feature: string;
+  value: number;
+  explanation: string;
+}
+
+export interface ExplainBundle {
+  method: string;
+  harvest_readiness: { factors: ExplainFactor[] };
+  climate_risk: { factors: ExplainFactor[] };
+  context: ExplainContext[];
+}
+
 export interface PredictionRun {
   id: number;
   pan_id: number;
@@ -246,6 +266,7 @@ export interface PredictionRun {
   min_readiness: number;
   projected_yield_kg: number;
   shap: Record<string, Record<string, number>>;
+  explain: ExplainBundle | null;
   series: SeriesPoint[];
   created_at: string;
   scenario: string;
@@ -263,6 +284,7 @@ export interface PredictionRecord {
   forecast_date: string;
   features: Record<string, unknown>;
   shap_values: Record<string, Record<string, number>>;
+  explain: ExplainBundle | null;
   series: SeriesPoint[];
   created_at: string;
 }
@@ -352,6 +374,11 @@ export interface Recommendation {
   farmer_notes: string;
   created_at: string;
   responded_at: string | null;
+  action_deadline: string | null;
+  confidence_pct: number;
+  reasons: string[];
+  instructions: string[];
+  consequence_if_waited: string;
 }
 
 export interface Outcome {

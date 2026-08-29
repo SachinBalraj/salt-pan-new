@@ -223,6 +223,7 @@ class Recommendation(Base):
     instruction_2: Mapped[str] = mapped_column(Text, default="")
     instruction_3: Mapped[str] = mapped_column(Text, default="")
     confidence_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    consequence_if_waited: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(32), default="pending")  # pending|accepted|declined|expired
     operator_accepted: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     operator_response_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

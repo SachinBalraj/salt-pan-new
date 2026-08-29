@@ -92,7 +92,7 @@ Open http://localhost:3000 (dashboard) or http://localhost:8000/docs (API).
 
 ```bash
 cd backend && source .venv/bin/activate
-pytest -q          # 67 tests: health, datasets, ingestion, proxies, full training/prediction pipeline, Phase-6 ML, Phase-7 digital-twin + sensors, Phase-8 weather service, Phase-9 rain simulator
+pytest -q          # 78 tests: health, datasets, ingestion, proxies, full training/prediction pipeline, Phase-6 ML, Phase-7 digital-twin + sensors, Phase-8 weather service, Phase-9 rain simulator, Phase-10 explainability
 cd ../frontend
 npm run build      # type-check + lint + production bundle
 npm run lint
@@ -378,13 +378,63 @@ adds a one-click control card (pan selector, 0–100 mm rainfall slider, Simulat
 button) showing before/after salinity & depth charts, a risk comparison and the
 recommended action on top of the existing ML-scenario panel.
 
+## Explainability (Phase 10)
+
+Every prediction is explained the way a farmer would, not the way a bag of
+models would. The explainer is **SHAP `TreeExplainer`** (works on the Random
+Forest classifiers/regressors and the GradientBoosting scorers alike), computed
+locally for the pan's current row and returned as the **top three factors per
+model** plus two weather-life context signals:
+
+```
+"explain": {
+  "method": "shap.TreeExplainer",
+  "harvest_readiness": { "factors": [                       // top 3, by |SHAP|
+      { "feature": "brine_density_be",
+        "contribution": 0.42, "weight_pct": 38.1,
+        "explanation": "The brine is well concentrated" }, ... ] },
+  "climate_risk":       { "factors": [ ... ] },
+  "context": [                                              // next-24h plain English
+      { "feature": "forecast_rain_24h_mm",
+        "value": 18.0,
+        "explanation": "High rainfall expected during the next 24 hours" },
+      { "feature": "predicted_salinity_after_rain",
+        "value": 174.2,
+        "explanation": "Rain is expected to dilute the brine" } ]
+}
+```
+
+Technical names are never the headline. A glossary
+(`app/services/explainability.py`) converts every model feature into plain
+language — including the two canonical mappings required by spec:
+`forecast_rain_24h_mm → "High rainfall expected during the next 24 hours"` and
+`predicted_salinity_after_rain → "Rain is expected to dilute the brine"`. The
+technical name stays as a muted secondary line for auditability, and the
+signed SHAP value + share of signal (`weight_pct`) quantify each driver.
+
+Every generated recommendation is a complete six-part decision card:
+
+1. **Recommended action** (`recommendation_type` / title),
+2. **Action deadline** (`action_deadline`),
+3. **Three reasons** (`reasons`, the third humanised from the top SHAP drivers),
+4. **Confidence** (`confidence_pct`),
+5. **Predicted consequence if the farmer waits** (`consequence_if_waited`,
+   newly persisted via the Phase-10 migration),
+6. **Step-by-step instructions** (`instructions`).
+
+The API surface is unchanged — `POST /api/predictions/run` now also returns
+`explain`, and `/api/recommendations*` items carry the new fields. The UI shows
+readiness/risk driver cards with human explanations and the six-part
+recommendation layout (confidence + deadline badges, reasons, "if you wait…"
+consequence, numbered steps).
+
 ## Repository layout
 
 ```
 backend/
   alembic/            # migrations (initial, Phase-2 normalized schema, Phase-3 dataset_type)
   app/                # FastAPI app: routers/, services/, ml/
-  tests/              # pytest suite (67 tests)
+  tests/              # pytest suite (78 tests)
 data/
   samples/            # etc. bundled sample dataset (salt_pan_dataset.csv)
   processed/          # training pool + feedback CSV (gitignored)

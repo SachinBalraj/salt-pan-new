@@ -50,7 +50,7 @@ export default function PredictPanel() {
     <div className="space-y-5">
       <Card
         title="Climate-risk & harvest-readiness prediction"
-        subtitle="Digital-twin physics stepped through the 7-day forecast, scored by the trained ML models with local SHAP explanation"
+        subtitle="Digital-twin physics stepped through the 7-day forecast, scored by the trained ML models and explained with SHAP TreeExplainer"
         right={
           <div className="flex items-center gap-2">
             <div className="w-52">
@@ -128,22 +128,53 @@ export default function PredictPanel() {
                   ["harvest_readiness", "What drives readiness?", "#10b981"],
                   ["climate_risk", "What drives climate risk?", "#ef4444"],
                 ] as const
-              ).map(([kind, title, color]) => (
-                <div key={kind}>
-                  <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">{title}</div>
-                  <div className="space-y-1.5">
-                    {topShap(r.shap[kind]).map(({ k, v }) => (
-                      <div key={k} className="flex items-center justify-between rounded-lg border border-white/5 bg-black/20 px-3 py-1.5 text-xs">
-                        <span className="text-slate-300">{k}</span>
-                        <span style={{ color }} className="font-mono tabular-nums">
-                          {v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2)}
-                        </span>
-                      </div>
-                    ))}
+              ).map(([kind, title, color]) => {
+                const factors = r.explain?.[kind]?.factors?.length
+                  ? r.explain[kind].factors
+                  : topShap(r.shap[kind]).map(({ k, v }) => ({
+                      feature: k,
+                      contribution: v,
+                      weight_pct: 100,
+                      explanation: k.replaceAll("_", " "),
+                    }));
+                return (
+                  <div key={kind}>
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">{title}</div>
+                    <div className="space-y-1.5">
+                      {factors.map((f) => (
+                        <div key={f.feature} className="rounded-lg border border-white/5 bg-black/20 px-3 py-2 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-100">{f.explanation}</span>
+                            <span style={{ color }} className="shrink-0 font-mono tabular-nums">
+                              {f.contribution >= 0 ? `+${f.contribution.toFixed(2)}` : f.contribution.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-slate-500">
+                            <span className="truncate">insight: {f.feature}</span>
+                            <span className="shrink-0">drives {f.weight_pct}% of the signal</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
+
+            {(r.explain?.context?.length ?? 0) > 0 && (
+              <div className="mt-5">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Next 24 hours at a glance
+                </div>
+                <div className="space-y-1.5">
+                  {(r.explain?.context ?? []).map((c) => (
+                    <div key={c.feature} className="rounded-lg border border-brine-500/20 bg-brine-500/5 px-3 py-2 text-xs text-slate-200">
+                      {c.explanation}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         )}
       </Card>

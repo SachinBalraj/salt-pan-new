@@ -111,6 +111,7 @@ def prediction_run_to_dict(pred: Prediction, pan: Pan) -> dict:
         "min_readiness": snap.get("min_readiness", 0.0),
         "projected_yield_kg": snap.get("projected_yield_kg", 0.0),
         "shap": pred.shap_values_json or {},
+        "explain": snap.get("explain") or {},
         "series": series,
         "created_at": pred.created_at.isoformat(),
         "scenario": snap.get("scenario", "actual_forecast"),
@@ -131,6 +132,7 @@ def prediction_record_to_dict(pred: Prediction) -> dict:
         "forecast_date": snap.get("forecast_date", ""),
         "features": snap.get("features", {}),
         "shap_values": pred.shap_values_json or {},
+        "explain": snap.get("explain") or {},
         "series": snap.get("series", []),
         "created_at": pred.created_at.isoformat(),
         "timestamp": pred.timestamp,
@@ -151,6 +153,7 @@ def make_prediction_row(
     horizon_days: int,
     model_version: Optional[ModelVersion] = None,
     proj_yield: Optional[float] = None,
+    explain: Optional[dict] = None,
 ) -> Prediction:
     """Build+return an uncommitted Prediction row from scored data."""
     day0 = series[0]
@@ -189,6 +192,12 @@ def make_prediction_row(
         "projected_yield_kg": proj_yield,
         "state": state,
         "pan_ref": pan.pan_code,
+        "explain": explain or {
+            "method": "shap.TreeExplainer",
+            "context": [],
+            "harvest_readiness": {"factors": []},
+            "climate_risk": {"factors": []},
+        },
     }
 
     pred = Prediction(
@@ -257,7 +266,25 @@ def recommendation_to_dict(rec: Recommendation, farmer_notes: str = "") -> dict:
         "action_deadline": rec.action_deadline,
         "reasons": reasons,
         "instructions": instructions,
+        "consequence_if_waited": rec.consequence_if_waited
+        or _default_consequence(action, reasons),
     }
+
+
+def _default_consequence(action: str, reasons: List[str]) -> str:
+    if action == "harvest_now":
+        return "If you wait, the incoming rain will dissolve part of the salt bed and delay the harvest."
+    if action == "harvest_soon":
+        return "Delaying beyond the window risks the bed being caught by rain at peak risk."
+    if action == "protect_pan":
+        return "Without protection, the forecast rain will dilute the brine and re-dissolve salt."
+    if action == "store_brine":
+        return "Keeping the concentrated brine exposed to rain will undo the concentration work."
+    if action == "pump_excess":
+        return "Leaving the dilute top layer delays the brine reaching the crystallisation zone."
+    if action == "continue_evaporation":
+        return "No loss is at risk now; delaying only postpones the next weather check."
+    return "The main risk is missing a fast-changing forecast."
 
 
 def _extract_kg(text: str) -> str:

@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { api, severityColor } from "@/lib/api";
+import { api, fmt, severityColor } from "@/lib/api";
 import {
   Badge,
   Button,
@@ -87,21 +87,52 @@ export default function RecommendationsPanel() {
                   <div className="flex items-center gap-2">
                     <Badge className={severityColor(r.risk_level)}>{r.risk_level}</Badge>
                     <span className="text-sm font-bold text-slate-100">{r.title}</span>
+                    <Badge className="border-white/10 bg-white/5 text-slate-300">{r.recommendation_type.replaceAll("_", " ")}</Badge>
                   </div>
-                  <Badge className={
-                    r.status === "accepted"
-                      ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                      : r.status === "declined"
-                        ? "border-slate-400/40 bg-slate-500/15 text-slate-300"
-                        : "border-amber-500/40 bg-amber-500/15 text-amber-300"
-                  }>
-                    {r.status}
-                  </Badge>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {r.confidence_pct > 0 && (
+                      <Badge className="border-sky-500/40 bg-sky-500/15 text-sky-300">
+                        {r.confidence_pct}% confidence
+                      </Badge>
+                    )}
+                    {r.action_deadline && (
+                      <Badge className="border-amber-500/40 bg-amber-500/15 text-amber-300">
+                        act by {fmt.date(r.action_deadline)}
+                      </Badge>
+                    )}
+                    <Badge className={
+                      r.status === "accepted"
+                        ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                        : r.status === "declined"
+                          ? "border-slate-400/40 bg-slate-500/15 text-slate-300"
+                          : "border-amber-500/40 bg-amber-500/15 text-amber-300"
+                    }>
+                      {r.status}
+                    </Badge>
+                  </div>
                 </div>
                 <p className="mt-2 text-sm text-slate-300">{r.message}</p>
                 <div className="mt-1.5 text-xs text-emerald-400/90">↳ {r.expected_benefit}</div>
-                <div className="mt-2 rounded-lg bg-black/30 px-3 py-2 text-xs text-slate-500">
-                  <b className="text-slate-400">Why:</b> {r.rationale}
+
+                {r.consequence_if_waited && (
+                  <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                    <b>If the farmer waits:</b> {r.consequence_if_waited}
+                  </div>
+                )}
+
+                <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                  <div className="rounded-lg bg-black/30 px-3 py-2 text-xs text-slate-500">
+                    <b className="text-slate-400">Three reasons</b>
+                    <ol className="mt-1 list-decimal space-y-1 pl-4">
+                      {(r.reasons ?? []).map((reason, i) => reason && <li key={i} className="text-slate-300">{reason}</li>)}
+                    </ol>
+                  </div>
+                  <div className="rounded-lg bg-black/30 px-3 py-2 text-xs text-slate-500">
+                    <b className="text-slate-400">Step by step</b>
+                    <ol className="mt-1 list-decimal space-y-1 pl-4">
+                      {(r.instructions ?? []).map((step, i) => step && <li key={i} className="text-slate-300">{step}</li>)}
+                    </ol>
+                  </div>
                 </div>
 
                 {r.status === "pending" && (
