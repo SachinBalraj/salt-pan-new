@@ -7,7 +7,16 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import DigitalTwinState, Pan
-from app.schemas import DigitalTwinOut, PanCreate, PanOut, PanUpdate, TwinSnapshotOut, TwinUpdateRequest
+from app.schemas import (
+    DigitalTwinOut,
+    PanCreate,
+    PanOut,
+    PanUpdate,
+    SimulateRainOut,
+    SimulateRainRequest,
+    TwinSnapshotOut,
+    TwinUpdateRequest,
+)
 from app.services.digital_twin import (
     default_twin_state,
     get_twin_state,
@@ -16,6 +25,7 @@ from app.services.digital_twin import (
     twin_summary,
 )
 from app.services.serializers import pan_to_dict, twin_snapshot_to_dict
+from app.services.simulator import simulate_rain
 
 router = APIRouter(prefix="/api/pans", tags=["salt pans / digital twins"])
 
@@ -104,6 +114,16 @@ def update_twin_state(pan_id: int, body: TwinUpdateRequest, db: Session = Depend
     db.commit()
     db.refresh(pan)
     return pan_to_dict(db, pan)
+
+
+@router.post("/{pan_id}/simulate-rain", response_model=SimulateRainOut)
+def simulate_rain_impact(pan_id: int, body: SimulateRainRequest,
+                         db: Session = Depends(get_db)):
+    """What-if: model a single rain event on a pan's current twin state."""
+    pan = db.get(Pan, pan_id)
+    if not pan:
+        raise HTTPException(404, "Salt pan not found")
+    return simulate_rain(db, pan, body.rainfall_mm)
 
 
 @router.get("/{pan_id}/snapshots", response_model=List[TwinSnapshotOut])

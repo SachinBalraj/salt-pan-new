@@ -294,6 +294,50 @@ export interface SimulationResult {
   impact: SimulationImpact;
 }
 
+export type RainRiskLevel = "LOW" | "MEDIUM" | "HIGH";
+
+export interface DigitalTwinOut {
+  pan_id: number;
+  pan_ref: string;
+  timestamp: string;
+  last_update: string;
+  source: string;
+  forecast_source: string;
+  salinity_g_l: number;
+  water_depth_cm: number;
+  brine_temperature_c: number;
+  brine_volume_m3: number;
+  estimated_salt_mass_kg: number;
+  forecast_rainfall_mm: number;
+  forecast_rainfall_7d_mm: number;
+  rain_probability_pct: number;
+  predicted_depth_after_rain_cm: number;
+  predicted_salinity_after_rain_g_l: number;
+  evaporation_mm_day: number;
+  harvest_readiness: number;
+  climate_risk: number;
+  overflow_risk: number;
+  last_operation: Record<string, unknown> | null;
+  demo_today: string | null;
+  state: Record<string, unknown>;
+}
+
+export interface SimulateRainOut {
+  pan_id: string;
+  current_salinity_g_l: number;
+  current_depth_cm: number;
+  current_volume_m3: number;
+  rainfall_mm: number;
+  rain_volume_m3: number;
+  predicted_depth_after_rain_cm: number;
+  predicted_salinity_after_rain_g_l: number;
+  risk_before: RainRiskLevel;
+  risk_after: RainRiskLevel;
+  predicted_harvest_delay_hours: number;
+  recommended_action: string;
+  recommendation: string;
+}
+
 export interface Recommendation {
   id: number;
   pan_id: number;

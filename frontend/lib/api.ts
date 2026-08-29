@@ -2,6 +2,7 @@ import type {
   ComparisonRow,
   DataSet,
   DatasetAnalysis,
+  DigitalTwinOut,
   EvaluationSummary,
   FeedbackResult,
   ForecastDay,
@@ -13,6 +14,7 @@ import type {
   PredictionRun,
   Recommendation,
   SaltPan,
+  SimulateRainOut,
   SimulationResult,
   SystemStatus,
   Thresholds,
@@ -113,6 +115,7 @@ export const api = {
     ),
   updateTwin: (id: number, state: Record<string, unknown>, source = "manual") =>
     post<SaltPan>(`/api/pans/${id}/twin`, { state, source }),
+  digitalTwin: (id: number) => get<DigitalTwinOut>(`/api/pans/${id}/digital-twin`),
 
   // ---- models
   models: () => get<MlModel[]>("/api/models"),
@@ -149,6 +152,8 @@ export const api = {
     horizon_days: number;
     scenario: { rainfall_mm: number; day_offset: number; dry_days_after: number };
   }) => post<SimulationResult>("/api/simulations/what-if-rain", body),
+  simulatePanRain: (panId: number, rainfallMm: number) =>
+    post<SimulateRainOut>(`/api/pans/${panId}/simulate-rain`, { rainfall_mm: rainfallMm }),
 
   // ---- recommendations
   recommendations: (panId?: number, status?: string) =>

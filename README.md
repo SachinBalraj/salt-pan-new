@@ -92,7 +92,7 @@ Open http://localhost:3000 (dashboard) or http://localhost:8000/docs (API).
 
 ```bash
 cd backend && source .venv/bin/activate
-pytest -q          # 60 tests: health, datasets, ingestion, proxies, full training/prediction pipeline, Phase-6 ML, Phase-7 digital-twin + sensors, Phase-8 weather service
+pytest -q          # 67 tests: health, datasets, ingestion, proxies, full training/prediction pipeline, Phase-6 ML, Phase-7 digital-twin + sensors, Phase-8 weather service, Phase-9 rain simulator
 cd ../frontend
 npm run build      # type-check + lint + production bundle
 npm run lint
@@ -132,6 +132,7 @@ npm run lint
 | GET/POST| `/api/pans`                        | Register pans, read/write their twin state     |
 | GET    | `/api/pans/{pan_id}/digital-twin`   | Full operational twin snapshot (salinity, depth, brine temp, volume, dissolved salt mass, forecast rain + probability, post-rain depth/salinity, evaporation, readiness, climate risk, last operation, last update) |
 | POST   | `/api/sensors/readings`             | Ingest a pan-sensor reading: validate → save → forecast → update twin → predict (if an active model exists) → refresh recommendations |
+| POST   | `/api/pans/{pan_id}/simulate-rain` | What-if: a single rain event on the pan's current twin state (`rainfall_mm` 1–300): before/after salinity & depth, rain volume, LOW/MEDIUM/HIGH risk, forecast harvest-delay hours, recommended action |
 | GET    | `/api/weather/forecast`             | `scenario=auto|mock|live|csv`, force refresh      |
 | POST   | `/api/weather/actual`               | Record observed rainfall for a stored forecast day (forecast stays untouched) |
 | POST   | `/api/predictions/run`              | 7-day readiness + risk forecast with SHAP (rejects `409` with no active model) |
@@ -332,13 +333,58 @@ and the digital-twin snapshot; the legacy `rainfall_mm = forecast_rain_mm`
 field is preserved for the frontend. A provider outage in `auto`/`live` mode
 emits mock data labelled `… (fallback)`, so the platform never goes dark.
 
+## Rain-impact simulator (Phase 9)
+
+`POST /api/pans/{pan_id}/simulate-rain` answers a single what-if question
+against the pan's **current** digital-twin state — no trained models needed, so
+it works for any registered pan:
+
+```
+POST /api/pans/PAN-3/simulate-rain          GET result
+  { "rainfall_mm": 20 }                       {
+                                                "pan_id": "PAN-3",
+                                                "current_salinity_g_l": 245.0,
+                                                "current_depth_cm": 8.0,
+                                                "current_volume_m3": 40.0,
+                                                "rainfall_mm": 20.0,
+                                                "rain_volume_m3": 10.0,
+                                                "predicted_depth_after_rain_cm": 10.0,
+                                                "predicted_salinity_after_rain_g_l": 196.0,
+                                                "risk_before": "LOW",
+                                                "risk_after": "HIGH",
+                                                "predicted_harvest_delay_hours": 72.0,
+                                                "recommended_action": "store_brine",
+                                                "recommendation": "Store the concentrated…"
+                                              }
+```
+
+The physics is transparent and deterministic (`app/services/simulator.py`):
+
+- **Post-rain depth** = depth + rainfall/10; **post-rain salinity** = mass-conserving
+  dilution (`salinity × depth ÷ depth_after`) — the same conventions the twin's
+  own projections use, so numbers agree with the digital twin & forecasts.
+- **Risk** (`LOW < 0.25 ≤ MEDIUM < 0.50 ≤ HIGH`) blends three dimensionless
+  drivers: how big the event is relative to the pan depth, the relative drop in
+  salinity, and how far the pan overflows its safe depth.
+- **Harvest delay (h)** = the longer of (rebuild the salt the storm dissolved,
+  at ~0.9 mm/day deposition) and (evaporate the rain column, at ~7 mm/day).
+- **Recommended action** mirrors the DSS advisory order
+  `harvest_now > store_brine > protect_pan > monitor`, keyed to the post-event
+  risk and the current brine state.
+
+Runs are **stateless** — the simulation never writes to the twin; refresh the
+page or re-run and the pan state is untouched. The **What-if** tab in the UI
+adds a one-click control card (pan selector, 0–100 mm rainfall slider, Simulate
+button) showing before/after salinity & depth charts, a risk comparison and the
+recommended action on top of the existing ML-scenario panel.
+
 ## Repository layout
 
 ```
 backend/
   alembic/            # migrations (initial, Phase-2 normalized schema, Phase-3 dataset_type)
   app/                # FastAPI app: routers/, services/, ml/
-  tests/              # pytest suite (60 tests)
+  tests/              # pytest suite (67 tests)
 data/
   samples/            # etc. bundled sample dataset (salt_pan_dataset.csv)
   processed/          # training pool + feedback CSV (gitignored)

@@ -341,6 +341,31 @@ class SimulationResult(BaseModel):
     impact: Dict[str, Any]
 
 
+class SimulateRainRequest(BaseModel):
+    """Question asked of the Phase-9 what-if simulator."""
+
+    rainfall_mm: float = Field(..., gt=0, le=300,
+                               description="Rain event size in mm to simulate")
+
+
+class SimulateRainOut(BaseModel):
+    """Before/after snapshot of a single rain event on one salt pan."""
+
+    pan_id: str
+    current_salinity_g_l: float
+    current_depth_cm: float
+    current_volume_m3: float
+    rainfall_mm: float
+    rain_volume_m3: float
+    predicted_depth_after_rain_cm: float
+    predicted_salinity_after_rain_g_l: float
+    risk_before: str  # LOW | MEDIUM | HIGH
+    risk_after: str   # LOW | MEDIUM | HIGH
+    predicted_harvest_delay_hours: float
+    recommended_action: str
+    recommendation: str
+
+
 # ------------------------------------------------------------------ Recommendations
 class RecommendationOut(ORMModel):
     id: int
