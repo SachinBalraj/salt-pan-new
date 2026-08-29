@@ -7,12 +7,13 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import DigitalTwinState, Pan
-from app.schemas import PanCreate, PanOut, PanUpdate, TwinSnapshotOut, TwinUpdateRequest
+from app.schemas import DigitalTwinOut, PanCreate, PanOut, PanUpdate, TwinSnapshotOut, TwinUpdateRequest
 from app.services.digital_twin import (
     default_twin_state,
     get_twin_state,
     progress_to_harvest,
     record_state,
+    twin_summary,
 )
 from app.services.serializers import pan_to_dict, twin_snapshot_to_dict
 
@@ -83,6 +84,14 @@ def get_twin(pan_id: int, db: Session = Depends(get_db)):
         "state": get_twin_state(db, pan),
         "progress_to_harvest": progress_to_harvest(get_twin_state(db, pan)),
     }
+
+
+@router.get("/{pan_id}/digital-twin", response_model=DigitalTwinOut)
+def get_digital_twin(pan_id: int, db: Session = Depends(get_db)):
+    pan = db.get(Pan, pan_id)
+    if not pan:
+        raise HTTPException(404, "Salt pan not found")
+    return twin_summary(db, pan)
 
 
 @router.post("/{pan_id}/twin", response_model=PanOut)

@@ -28,6 +28,7 @@ from app.routers import (
     pans,
     predictions,
     recommendations,
+    sensors,
     simulations,
     weather,
 )
@@ -75,6 +76,7 @@ app.include_router(weather.router)
 app.include_router(predictions.router)
 app.include_router(simulations.router)
 app.include_router(recommendations.router)
+app.include_router(sensors.router)
 app.include_router(outcomes.router)
 app.include_router(evaluation.router)
 

@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models import DigitalTwinState, Pan, WeatherReading
+from app.models import DigitalTwinState, OperationEvent, Pan, SensorReading, WeatherReading
 from app.services.data_generator import SALT_BULK_DENSITY_KG_M3, TARGET_THICKNESS_MM, advance_pan_state
 
 
@@ -176,6 +176,126 @@ def evap_mm_day(day: dict) -> float:
         float(day.get("sunshine_hours", 9.0)),
         float(day.get("rainfall_mm", 0.0)),
     )
+
+
+def apply_reading_to_state(state: dict, reading) -> dict:
+    """Merge a validated sensor reading into a twin state dict.
+
+    `reading` needs (at least) `salinity_g_l` and `water_depth_cm` plus the
+    standard sensor attribute names; salinity in g/L is converted to the
+    internal brine density in degrees Baume (÷ 9.5, the convention used by
+    `_derive_columns`).
+    """
+    st = {**default_twin_state(), **(state or {})}
+    if getattr(reading, "salinity_g_l", None) is not None:
+        den = float(reading.salinity_g_l) / 9.5
+        st["brine_density_be"] = round(max(3.5, min(den, 30.0)), 2)
+        st["salinity_g_l"] = round(float(reading.salinity_g_l), 1)
+    if getattr(reading, "water_depth_cm", None) is not None:
+        st["water_depth_cm"] = round(float(reading.water_depth_cm), 2)
+    if getattr(reading, "brine_temperature_c", None) is not None:
+        st["brine_temperature_c"] = round(float(reading.brine_temperature_c), 2)
+    if getattr(reading, "air_temperature_c", None) is not None:
+        st["air_temperature_c"] = round(float(reading.air_temperature_c), 2)
+    if getattr(reading, "humidity_pct", None) is not None:
+        st["humidity_pct"] = round(float(reading.humidity_pct), 2)
+    if getattr(reading, "ec_ms_cm", None) is not None:
+        st["ec_ms_cm"] = round(float(reading.ec_ms_cm), 1)
+    if getattr(reading, "sensor_quality", None) is not None:
+        st["sensor_quality"] = round(float(reading.sensor_quality), 1)
+    st["estimated_salt_mass_kg"] = salt_mass_kg(st["salt_thickness_mm"],
+                                                st.get("pan_area_m2"))
+    return st
+
+
+def _latest_brine_temp(db: Session, pan: Pan) -> Optional[float]:
+    row = (db.query(SensorReading)
+           .filter(SensorReading.pan_id == pan.id)
+           .order_by(SensorReading.timestamp.desc()).first())
+    if row and row.brine_temperature_c:
+        return float(row.brine_temperature_c)
+    return None
+
+
+def _latest_forecast_source(db: Session, pan: Pan) -> str:
+    row = (db.query(WeatherReading)
+           .filter(WeatherReading.pan_id == pan.id)
+           .order_by(WeatherReading.forecast_generated_at.desc())
+           .first())
+    return row.source if row and row.source else "none"
+
+
+def _latest_operation(db: Session, pan: Pan) -> Optional[dict]:
+    ev = (db.query(OperationEvent)
+          .filter(OperationEvent.pan_id == pan.id)
+          .order_by(OperationEvent.event_timestamp.desc())
+          .first())
+    if ev:
+        return {
+            "event_type": ev.event_type,
+            "timestamp": ev.event_timestamp.isoformat(),
+            "recommendation_id": ev.recommendation_id,
+        }
+    return None
+
+
+def twin_summary(db: Session, pan: Pan,
+                 forecast_days: Optional[List[dict]] = None) -> dict:
+    """Full operational digital-twin snapshot for one pan.
+
+    Combines the internal twin state with the latest forecast to expose the
+    current salinity/depth/temperature, brine volume and dissolved salt mass,
+    next-24h and horizon rainfall with probability, post-rain projections,
+    evaporation, harvest-readiness, climate risk, last operation and the last
+    update timestamp.
+    """
+    st = normalise_state(get_twin_state(db, pan))
+    forecast = list(forecast_days) if forecast_days is not None \
+        else latest_forecast_days(db, pan, 7)
+    derived = _derive_columns(st, pan, forecast)
+    day0 = forecast[0] if forecast else {}
+
+    den = st["brine_density_be"]
+    salinity_g_l = round(float(st.get("salinity_g_l") or den * 9.5), 1)
+    temp = float(st.get("brine_temperature_c") or _latest_brine_temp(db, pan) or 28.0)
+
+    last_op = _latest_operation(db, pan)
+    if not last_op:
+        for marker, label in (("last_harvest_date", "harvest"),
+                              ("last_rain_date", "rain_event")):
+            if st.get(marker):
+                last_op = {"event_type": label, "timestamp": str(st[marker])}
+                break
+
+    return {
+        "pan_id": pan.id,
+        "pan_ref": pan.pan_code,
+        "timestamp": dt.datetime.utcnow().isoformat(),
+        "last_update": str(st.get("last_update") or dt.date.today().isoformat()),
+        "source": str(st.get(_SOURCE_KEY) or "manual"),
+        "forecast_source": _latest_forecast_source(db, pan),
+        "salinity_g_l": salinity_g_l,
+        "water_depth_cm": round(st["water_depth_cm"], 2),
+        "brine_temperature_c": round(temp, 2),
+        "brine_volume_m3": derived["brine_volume_m3"],
+        "estimated_salt_mass_kg": derived["estimated_salt_mass_kg"],
+        "forecast_rainfall_mm": round(float(day0.get("rainfall_mm", 0.0)), 2),
+        "forecast_rainfall_7d_mm": round(
+            float(sum(d.get("rainfall_mm", 0.0) for d in forecast)), 2),
+        "rain_probability_pct": round(
+            float(day0.get("precipitation_probability_pct", 0.0)), 1),
+        "predicted_depth_after_rain_cm": derived["predicted_depth_after_rain_cm"],
+        "predicted_salinity_after_rain_g_l": derived["predicted_salinity_after_rain_g_l"],
+        "evaporation_mm_day": derived["evaporation_mm_day"],
+        "harvest_readiness": round(float(st.get("_harvest_readiness")
+                                         or derived["harvest_readiness"]), 3),
+        "climate_risk": round(float(st.get("_climate_risk")
+                                    or derived["climate_risk"]), 3),
+        "overflow_risk": derived["overflow_risk"],
+        "last_operation": last_op,
+        "demo_today": st.get("demo_today"),
+        "state": st,
+    }
 
 
 def record_state(db: Session, pan: Pan, state: dict,

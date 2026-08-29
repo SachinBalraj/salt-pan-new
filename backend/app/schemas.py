@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ORMModel(BaseModel):
@@ -157,6 +157,66 @@ class TwinSnapshotOut(ORMModel):
 class TwinUpdateRequest(BaseModel):
     state: Dict[str, Any] = Field(..., description="New ping of the digital twin state")
     source: str = "manual"
+
+
+class DigitalTwinOut(BaseModel):
+    """Full operational digital-twin snapshot for one salt pan."""
+
+    pan_id: int
+    pan_ref: str
+    timestamp: str
+    last_update: str
+    source: str
+    forecast_source: str
+    salinity_g_l: float
+    water_depth_cm: float
+    brine_temperature_c: float
+    brine_volume_m3: float
+    estimated_salt_mass_kg: float
+    forecast_rainfall_mm: float
+    forecast_rainfall_7d_mm: float
+    rain_probability_pct: float
+    predicted_depth_after_rain_cm: float
+    predicted_salinity_after_rain_g_l: float
+    evaporation_mm_day: float
+    harvest_readiness: float
+    climate_risk: float
+    overflow_risk: float
+    last_operation: Optional[Dict[str, Any]] = None
+    demo_today: Optional[str] = None
+    state: Dict[str, Any]
+
+
+class SensorReadingCreate(BaseModel):
+    """Telemetry payload from an in-situ sensor board (validated on ingest)."""
+
+    pan_id: Optional[int] = Field(None, description="Numeric pan DB id (or pan_code)")
+    pan_code: Optional[str] = Field(None, description="Pan reference, e.g. PAN-1 (or pan_id)")
+    salinity_g_l: float = Field(..., ge=0.0, le=350.0, description="Brine salinity in g/L")
+    ec_ms_cm: Optional[float] = Field(None, ge=0.0, le=300.0)
+    water_depth_cm: float = Field(..., ge=0.0, le=500.0, description="Brine water depth in cm")
+    brine_temperature_c: Optional[float] = Field(None, ge=-5.0, le=60.0)
+    air_temperature_c: Optional[float] = Field(None, ge=-20.0, le=55.0)
+    humidity_pct: Optional[float] = Field(None, ge=0.0, le=100.0)
+    sensor_quality: Optional[float] = Field(None, ge=0.0, le=100.0)
+    recorded_at: Optional[str] = Field(None, description="ISO-8601 timestamp (defaults to now)")
+
+    @model_validator(mode="after")
+    def _check_pan_reference(self):
+        if self.pan_id is None and not self.pan_code:
+            raise ValueError("Provide pan_id or pan_code to route the reading")
+        return self
+
+
+class SensorIngestOut(BaseModel):
+    reading_id: int
+    pan_id: int
+    pan_ref: str
+    status: str
+    digital_twin: DigitalTwinOut
+    prediction: Optional[Dict[str, Any]] = None
+    recommendations: List[Dict[str, Any]] = []
+    active_model: bool = False
 
 
 # ------------------------------------------------------------------ ML models

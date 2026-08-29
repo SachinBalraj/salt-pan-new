@@ -8,6 +8,9 @@ them with **weather forecasts** (Open-Meteo live or an offline mock), scores a
 **harvest-time regressor** on verified field outcomes — runs **"what-if it
 rains?"** simulations, issues **recommendations** for harvest dates, records
 **verified outcomes**, and **feeds corrections back** into model retraining.
+Real-time **sensor readings** (salinity, depth, brine temperature) are
+validated, stored and streamed straight into each pan's **digital twin**,
+refreshing its forecast, readiness/risk scores and advice.
 
 ## Stack
 
@@ -89,7 +92,7 @@ Open http://localhost:3000 (dashboard) or http://localhost:8000/docs (API).
 
 ```bash
 cd backend && source .venv/bin/activate
-pytest -q          # 42 tests: health, datasets, ingestion, proxies, full training/prediction pipeline, Phase-6 ML
+pytest -q          # 50 tests: health, datasets, ingestion, proxies, full training/prediction pipeline, Phase-6 ML, Phase-7 digital-twin + sensors
 cd ../frontend
 npm run build      # type-check + lint + production bundle
 npm run lint
@@ -124,6 +127,8 @@ npm run lint
 | GET    | `/api/datasets/{id}/invalid_rows`    | CSV of rejected rows with per-row reasons      |
 | POST   | `/api/datasets/{id}/import`          | Confirm import of valid rows into operational tables |
 | GET/POST| `/api/pans`                        | Register pans, read/write their twin state     |
+| GET    | `/api/pans/{pan_id}/digital-twin`   | Full operational twin snapshot (salinity, depth, brine temp, volume, dissolved salt mass, forecast rain + probability, post-rain depth/salinity, evaporation, readiness, climate risk, last operation, last update) |
+| POST   | `/api/sensors/readings`             | Ingest a pan-sensor reading: validate → save → forecast → update twin → predict (if an active model exists) → refresh recommendations |
 | GET    | `/api/weather/forecast`             | `scenario=auto|mock|live`, force refresh       |
 | POST   | `/api/predictions/run`              | 7-day readiness + risk forecast with SHAP (rejects `409` with no active model) |
 | POST   | `/api/simulations/what-if-rain`     | "Rain tomorrow?" twin simulation with impact   |
@@ -261,13 +266,45 @@ The training page shows the dataset used, training/test row counts, split date
 range, feature list, metrics, proxy-label flag, model version and training
 errors.
 
+## Digital twin + sensor readings (Phase 7)
+
+Every salt pan has an operational **digital twin**:
+
+```
+GET /api/pans/{pan_id}/digital-twin
+```
+
+which returns the current **salinity (g/L)**, **water depth (cm)**,
+**brine temperature (°C)**, **brine volume (m³)**, **estimated dissolved salt
+mass (kg)**, **forecast rainfall** (next 24h + 7-day window, mm) with **rain
+probability (%)**, **predicted post-rain depth** and **predicted post-rain
+salinity**, **evaporation estimate (mm/day)**, **harvest readiness**,
+**climate risk**, the pan's **last operation** and its **last update**.
+
+In-situ telemetry is streamed in through:
+
+```
+POST /api/sensors/readings
+    { "pan_code": "PAN-1", "salinity_g_l": 245.2, "water_depth_cm": 6.8,
+      "brine_temperature_c": 30.1, "ec_ms_cm": 205.0, ... }
+```
+
+The payload is **validated** against physical/domain ranges (rejects
+`422`), saved, then piped end-to-end: the **latest weather forecast** is
+resolved for the pan, the **digital twin is updated** with the measured state,
+a **prediction is run when an active model exists** (skipped cleanly when the
+model gate is closed), and the pan's recommendations are **refreshed** —
+previous pending advice is expired and a fresh top-3 set is issued. Sensed
+salinity is converted to the internal °Bé density (÷ 9.5) so the twin physics,
+forecast and ML features stay consistent.
+
 ## Repository layout
 
 ```
 backend/
   alembic/            # migrations (initial, Phase-2 normalized schema, Phase-3 dataset_type)
   app/                # FastAPI app: routers/, services/, ml/
-  tests/              # pytest suite (42 tests)
+  tests/              # pytest suite (50 tests)
 data/
   samples/            # etc. bundled sample dataset (salt_pan_dataset.csv)
   processed/          # training pool + feedback CSV (gitignored)
