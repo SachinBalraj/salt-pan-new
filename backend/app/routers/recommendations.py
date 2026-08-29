@@ -128,6 +128,90 @@ def generate(pan_id: int, db: Session = Depends(get_db)):
     return [recommendation_to_dict(r) for r in output]
 
 
+@router.get("/active", response_model=List[RecommendationOut])
+def active_recommendations(pan_id: Optional[int] = None,
+                           db: Session = Depends(get_db)):
+    """Recommendations still waiting for a farmer decision (pending/accepted)."""
+    q = db.query(Recommendation).filter(Recommendation.status.in_(("pending", "accepted")))
+    if pan_id:
+        q = q.filter(Recommendation.pan_id == pan_id)
+    q = q.order_by(Recommendation.created_at.desc())
+    return [recommendation_to_dict(r) for r in q.limit(100).all()]
+
+
+@router.get("/{rec_id}", response_model=RecommendationOut)
+def get_recommendation(rec_id: int, db: Session = Depends(get_db)):
+    rec = db.get(Recommendation, rec_id)
+    if not rec:
+        raise HTTPException(404, "Recommendation not found")
+    return recommendation_to_dict(rec, farmer_notes=_farmer_notes(db, rec))
+
+
+def _farmer_notes(db: Session, rec: Recommendation) -> str:
+    note = (db.query(OperationEvent)
+            .filter(OperationEvent.recommendation_id == rec.id,
+                    OperationEvent.event_type == "operator_response")
+            .order_by(OperationEvent.created_at.desc()).first())
+    return note.operator_notes if note else ""
+
+
+def _respond(db: Session, rec_id: int, status: str) -> Recommendation:
+    rec = db.get(Recommendation, rec_id)
+    if not rec:
+        raise HTTPException(404, "Recommendation not found")
+    if rec.status == "completed":
+        raise HTTPException(409, "This recommendation is already completed")
+    rec.status = status
+    rec.operator_accepted = status == "accepted"
+    rec.operator_response_at = dt.datetime.utcnow()
+    db.add(OperationEvent(
+        pan_id=rec.pan_id,
+        recommendation_id=rec.id,
+        event_timestamp=dt.datetime.utcnow(),
+        event_type="operator_response",
+        operator_notes="farmer confirmation",
+    ))
+    db.commit()
+    db.refresh(rec)
+    return rec
+
+
+@router.post("/{rec_id}/accept", response_model=RecommendationOut)
+def accept_recommendation(rec_id: int, db: Session = Depends(get_db)):
+    """Farmer approves the action: the recommendation becomes an operator
+    record. The model still does not operate any pump/gate/drain itself."""
+    rec = _respond(db, rec_id, "accepted")
+    return recommendation_to_dict(rec, farmer_notes=_farmer_notes(db, rec))
+
+
+@router.post("/{rec_id}/reject", response_model=RecommendationOut)
+def reject_recommendation(rec_id: int, db: Session = Depends(get_db)):
+    rec = _respond(db, rec_id, "rejected")
+    return recommendation_to_dict(rec, farmer_notes=_farmer_notes(db, rec))
+
+
+@router.post("/{rec_id}/complete", response_model=RecommendationOut)
+def complete_recommendation(rec_id: int, db: Session = Depends(get_db)):
+    """Farmer marks the accepted action as physically done in the field."""
+    rec = db.get(Recommendation, rec_id)
+    if not rec:
+        raise HTTPException(404, "Recommendation not found")
+    if rec.status != "accepted":
+        raise HTTPException(409, "Only an accepted recommendation can be completed")
+    rec.status = "completed"
+    rec.operator_response_at = dt.datetime.utcnow()
+    db.add(OperationEvent(
+        pan_id=rec.pan_id,
+        recommendation_id=rec.id,
+        event_timestamp=dt.datetime.utcnow(),
+        event_type="operator_response",
+        operator_notes="action completed in the field",
+    ))
+    db.commit()
+    db.refresh(rec)
+    return recommendation_to_dict(rec, farmer_notes=_farmer_notes(db, rec))
+
+
 @router.post("/{rec_id}/respond", response_model=RecommendationOut)
 def respond(rec_id: int, body: RespondRequest, db: Session = Depends(get_db)):
     rec = db.get(Recommendation, rec_id)

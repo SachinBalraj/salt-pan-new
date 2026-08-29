@@ -25,31 +25,42 @@ PAN_STATUS = "active"
 
 REC_TITLES = {
     "harvest_now": "Harvest now before the rain",
+    "HARVEST_NOW": "Harvest now before the rain",
     "harvest_soon": "Schedule harvest in the next 1-2 days",
     "protect_pan": "Protect the pan from incoming rain",
+    "PROTECT_OR_DRAIN": "Protect the pan or drain the excess water",
     "continue_evaporation": "Keep the brine crystallising",
     "pump_excess": "Pump away the dilute top water",
     "store_brine": "Store the concentrated brine before the rain",
+    "TRANSFER_BRINE": "Transfer the concentrated brine to safe storage",
     "monitor": "Pan is on track - keep monitoring",
+    "WAIT_AND_RECHECK": "Keep monitoring - recheck when the forecast changes",
 }
 
 REC_BENEFITS = {
     "harvest_now": "Protects the ready-to-harvest crop from rain damage",
+    "HARVEST_NOW": "Protects the ready-to-harvest crop from rain damage",
     "harvest_soon": "Captures the crop at peak maturity",
     "protect_pan": "Prevents dilution and re-dissolution of the salt layer",
+    "PROTECT_OR_DRAIN": "Prevents flooding and re-dissolution of the salt layer",
     "continue_evaporation": "Progression toward harvest maturity",
     "pump_excess": "Faster climb to the crystallisation zone",
     "store_brine": "Protects concentrated-brine work from the storm",
+    "TRANSFER_BRINE": "Protects concentrated-brine work from the storm",
     "monitor": "Stays ahead of sudden weather changes",
+    "WAIT_AND_RECHECK": "Stays ahead of sudden weather changes",
 }
 
 
 def _risk_level_from(action: str, confidence_pct: float) -> str:
     fixed = {
         "harvest_now": "high",
-        "protect_pan": "high" if confidence_pct >= 60 else "medium",
-        "harvest_soon": "medium",
+        "HARVEST_NOW": "high",
+        "protect_pan": "high",
+        "PROTECT_OR_DRAIN": "high",
         "store_brine": "medium",
+        "TRANSFER_BRINE": "medium",
+        "harvest_soon": "medium",
         "pump_excess": "low",
         "continue_evaporation": "low",
         "monitor": "low",
@@ -255,6 +266,7 @@ def recommendation_to_dict(rec: Recommendation, farmer_notes: str = "") -> dict:
         "recommendation_type": action,
         "title": title,
         "message": message,
+        "instruction": _headline_instruction(action, rec.action_deadline),
         "rationale": rationale,
         "expected_benefit": benefit,
         "risk_level": _risk_level_from(action, rec.confidence_pct),
@@ -268,23 +280,45 @@ def recommendation_to_dict(rec: Recommendation, farmer_notes: str = "") -> dict:
         "instructions": instructions,
         "consequence_if_waited": rec.consequence_if_waited
         or _default_consequence(action, reasons),
+        "requires_farmer_confirmation": True,
     }
 
 
 def _default_consequence(action: str, reasons: List[str]) -> str:
-    if action == "harvest_now":
+    if action in ("harvest_now", "HARVEST_NOW"):
         return "If you wait, the incoming rain will dissolve part of the salt bed and delay the harvest."
     if action == "harvest_soon":
         return "Delaying beyond the window risks the bed being caught by rain at peak risk."
-    if action == "protect_pan":
+    if action in ("protect_pan", "PROTECT_OR_DRAIN"):
         return "Without protection, the forecast rain will dilute the brine and re-dissolve salt."
-    if action == "store_brine":
+    if action in ("store_brine", "TRANSFER_BRINE"):
         return "Keeping the concentrated brine exposed to rain will undo the concentration work."
     if action == "pump_excess":
         return "Leaving the dilute top layer delays the brine reaching the crystallisation zone."
-    if action == "continue_evaporation":
+    if action in ("continue_evaporation", "WAIT_AND_RECHECK"):
         return "No loss is at risk now; delaying only postpones the next weather check."
     return "The main risk is missing a fast-changing forecast."
+
+
+def _headline_instruction(action: str, deadline) -> str:
+    """Reconstruct the farmer-facing instruction headline for stored rows."""
+    if not deadline:
+        return ""
+    if not isinstance(deadline, dt.datetime):
+        try:
+            deadline = dt.datetime.fromisoformat(str(deadline))
+        except (TypeError, ValueError):
+            return ""
+    clock = f"{(deadline.hour % 12) or 12}:{deadline.minute:02d} {deadline.strftime('%p')}"
+    if action in ("harvest_now", "HARVEST_NOW"):
+        return f"Harvest before {clock}."
+    if action in ("store_brine", "TRANSFER_BRINE"):
+        return f"Transfer the brine to safe storage before {clock}."
+    if action in ("protect_pan", "PROTECT_OR_DRAIN"):
+        return f"Protect the pan or drain the excess water before {clock}."
+    if action in ("monitor", "WAIT_AND_RECHECK"):
+        return f"Keep monitoring; recheck the forecast before {clock}."
+    return ""
 
 
 def _extract_kg(text: str) -> str:
@@ -296,7 +330,7 @@ def _extract_kg(text: str) -> str:
 
 def _build_message(action: str, reasons: List[str], instructions: List[str],
                    confidence_pct: float) -> str:
-    if action == "harvest_now":
+    if action in ("harvest_now", "HARVEST_NOW"):
         lead = reasons[0] if reasons and reasons[0] else "Harvest before the rain arrives."
         step = instructions[0] if instructions and instructions[0] \
             else "Move the crop under cover before the rain."
@@ -306,12 +340,13 @@ def _build_message(action: str, reasons: List[str], instructions: List[str],
         step = instructions[0] if instructions and instructions[0] \
             else "Schedule the harvest for the next clear day."
         return f"{lead} {step}"
-    if action == "protect_pan":
+    if action in ("protect_pan", "PROTECT_OR_DRAIN"):
         lead = reasons[0] if reasons and reasons[0] else "Rain is forecast for the window."
         step = instructions[0] if instructions and instructions[0] \
             else "Protect stockpiles and open the drains."
         return f"{lead} {step}"
-    if action in ("store_brine", "pump_excess", "continue_evaporation", "monitor"):
+    if action in ("store_brine", "TRANSFER_BRINE", "pump_excess",
+                  "continue_evaporation", "monitor", "WAIT_AND_RECHECK"):
         lead = reasons[0] if reasons and reasons[0] else "No urgent action is required."
         step = instructions[0] if instructions and instructions[0] \
             else "Continue standard checks."

@@ -1,0 +1,93 @@
+# ============================================================================
+# PHASE-11 RULE-BASED RECOMMENDATION + SAFETY ENGINE  (PROTOTYPE)
+# ----------------------------------------------------------------------------
+# The advisor combines the digital-twin state, the Random-Forest predictions,
+# the what-if rain simulation and the SHAP factor explanations into typed
+# *facts*, then evaluates this YAML rule set. The fired rules become
+# recommendations with structured reasons and numbered instructions.
+#
+# Action vocabulary (physical actions ALWAYS require farmer confirmation):
+#   HARVEST_NOW        - crop is ready and rain threatens the salt bed
+#   TRANSFER_BRINE     - concentrated brine must be moved to safe storage
+#   PROTECT_OR_DRAIN   - forecast overflow/rain endangers the pan
+#   WAIT_AND_RECHECK   - nothing urgent; keep monitoring + recheck forecast
+#
+# Condition syntax (line per condition, all must hold to fire the rule):
+#   <fact> <op> <value>
+#   ops: ==, !=, >, >=, <, <=
+#   value is a literal (number, true/false, or STRING) OR the name of another
+#   fact. Example:  "predicted_depth_after_rain_cm > safe_depth_cm" compares
+#   two facts; "risk_level == HIGH" compares a fact to a literal string.
+#
+# Rules are evaluated in `priority` order and stop at the first match, so the
+# most urgent action wins. Override the whole file at runtime with
+#   RECOMMENDATION_RULES_FILE=/path/to/my_rules.yaml
+# ============================================================================
+meta:
+  status: prototype
+  version: 1
+  note: >
+    Per-pan safety + advisory rules for the DSS recommendation engine. Tune
+    thresholds to local pan geometry and harvest practice before production.
+
+# -------- Fact thresholds (editable without touching code) -----------------
+thresholds:
+  # harvest readiness probability >= this => harvest_ready = true
+  harvest_ready_threshold: 0.55
+  # configured "harvest-ready" salinity window used in reason text
+  harvest_salinity_min_g_l: 230.0
+  harvest_salinity_max_g_l: 300.0
+  # timeline risk maps to LOW / MEDIUM / HIGH
+  risk_high: 0.65
+  risk_medium: 0.40
+  # deadline for field actions on the target rain day
+  deadline_time: "18:00"
+  # rain threshold (mm) that counts as a "rain day" for deadline/timing
+  rain_day_mm: 0.5
+  # salinity drop (g/L) beyond which the dilution is worth calling out
+  dilution_alert_g_l: 5.0
+
+# -------- Rules (first match in priority order wins) ------------------------
+rules:
+  - id: harvest_now_rain_high
+    name: Harvest before the rain hits a ripe bed
+    class: advisory
+    action: HARVEST_NOW
+    priority: 1
+    requires_farmer_confirmation: true
+    conditions:
+      - "harvest_ready == true"
+      - "risk_level == HIGH"
+      - "rain_24h_mm > 0"
+
+  - id: transfer_brine_to_safe_storage
+    name: Transfer concentrated brine to safe storage
+    class: advisory
+    action: TRANSFER_BRINE
+    priority: 2
+    requires_farmer_confirmation: true
+    conditions:
+      - "harvest_ready == false"
+      - "risk_level == HIGH"
+      - "rain_24h_mm > 0"
+      - "safe_storage_available == true"
+      - "brine_concentrated == true"
+
+  - id: protect_or_drain_overflow
+    name: Protect the pan or drain the forecast overflow
+    class: safety
+    action: PROTECT_OR_DRAIN
+    priority: 3
+    requires_farmer_confirmation: true
+    conditions:
+      - "predicted_depth_after_rain_cm > safe_depth_cm"
+
+  - id: wait_and_recheck_low_risk
+    name: Keep monitoring - recheck when the forecast changes
+    class: advisory
+    action: WAIT_AND_RECHECK
+    priority: 4
+    requires_farmer_confirmation: true
+    conditions:
+      - "risk_level == LOW"
+      - "harvest_ready == false"

@@ -126,6 +126,29 @@ def simulate_rain_impact(pan_id: int, body: SimulateRainRequest,
     return simulate_rain(db, pan, body.rainfall_mm)
 
 
+def _resolve_pan(db: Session, pan_id: str) -> Pan:
+    """Resolve a pan by numeric primary key or by its PAN-XX pan code."""
+    if pan_id.isdigit():
+        pan = db.get(Pan, int(pan_id))
+        if pan:
+            return pan
+    pan = db.query(Pan).filter(Pan.pan_code == pan_id).first()
+    if not pan:
+        raise HTTPException(404, "Salt pan not found")
+    return pan
+
+
+@router.post("/{pan_id}/predict")
+def predict_advice(pan_id: str, db: Session = Depends(get_db)):
+    """Phase-11 advisor: digital-twin + RF + what-if rain + SHAP factors fused
+    by the YAML rule engine. Returns the primary recommendation cards plus the
+    typed fact record; physical actions remain farmer-approved."""
+    from app.services.advisor import run_advice
+
+    pan = _resolve_pan(db, pan_id)
+    return run_advice(db, pan)
+
+
 @router.get("/{pan_id}/snapshots", response_model=List[TwinSnapshotOut])
 def twin_snapshots(pan_id: int, db: Session = Depends(get_db)):
     if not db.get(Pan, pan_id):
