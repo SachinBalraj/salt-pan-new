@@ -1,0 +1,10 @@
+event_timestamp,pan_id,event_type,transferred_volume_l,pump_duration_min,protection_applied,harvest_date,actual_yield_kg,salt_purity_pct,yield_loss_pct
+2024-03-15T06:00:00,PAN-1,transfer,5000,45,false,,,,
+2024-03-20T07:00:00,PAN-1,pump,,120,false,,,,
+2024-03-28T06:30:00,PAN-1,harvest,,,false,2024-03-28,850,96.2,3.5
+2024-04-01T06:00:00,PAN-2,transfer,3500,30,false,,,,
+2024-04-03T14:00:00,PAN-2,protect,,,true,,,
+2024-04-05T06:30:00,PAN-2,harvest,,,false,2024-04-05,620,94.8,5.1
+2024-03-10T06:00:00,PAN-3,drain,,60,false,,,,
+2024-03-18T07:00:00,PAN-3,transfer,2000,25,false,,,,
+2024-04-02T06:30:00,PAN-3,harvest,,,false,2024-04-02,410,97.1,2.0

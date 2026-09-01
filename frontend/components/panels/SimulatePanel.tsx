@@ -58,7 +58,8 @@ export default function SimulatePanel() {
   });
   useEffect(() => {
     sim.reset();
-  }, [panId, sim]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panId]);
 
   const twin = useQuery({
     queryKey: ["digital-twin", selected?.id],
@@ -82,7 +83,8 @@ export default function SimulatePanel() {
   });
   useEffect(() => {
     ml.reset();
-  }, [panId, ml]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panId]);
 
   const m = ml.data;
   const chartData = m

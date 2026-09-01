@@ -40,6 +40,7 @@ router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
 ALLOWED_EXTS = {".csv", ".tsv"}
 MAX_PREVIEW_ROWS = 50
+_MAX_CSV_ROWS_HARD_LIMIT = 500_000  # safety cap to prevent memory exhaustion
 
 TYPE_LABELS = {
     "sensor": "Pan sensor readings",
@@ -49,8 +50,21 @@ TYPE_LABELS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Input sanitisation helpers
+# ---------------------------------------------------------------------------
+_STRIP_RE = re.compile(r"[<>\"'`;]")
+
+
+def _sanitise_str(value: str, max_len: int = 256) -> str:
+    """Strip potentially dangerous characters from user-supplied strings."""
+    cleaned = _STRIP_RE.sub("", value.strip())
+    return cleaned[:max_len]
+
+
 def _safe_filename(name: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]", "_", name)
+    """Only allow safe filename characters."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", name)[:120]
 
 
 def _load_df(file_path) -> pd.DataFrame:
@@ -61,16 +75,50 @@ def _load_df(file_path) -> pd.DataFrame:
         raise HTTPException(400, f"Could not parse dataset: {exc}") from exc
     if df.empty:
         raise HTTPException(400, "Empty dataframe — no rows to analyse.")
+    if len(df) > _MAX_CSV_ROWS_HARD_LIMIT:
+        raise HTTPException(
+            400,
+            f"Dataset exceeds maximum row limit ({_MAX_CSV_ROWS_HARD_LIMIT:,} rows). "
+            "Please split the file into smaller chunks.",
+        )
     return df
 
 
 async def _read_upload(file: UploadFile) -> tuple[str, bytes]:
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in ALLOWED_EXTS:
-        raise HTTPException(400, f"Unsupported file type '{ext}'. Upload a .csv or .tsv file.")
+        raise HTTPException(
+            400,
+            f"Unsupported file type '{ext}'. Only CSV (.csv) and TSV (.tsv) files are accepted.",
+        )
     content = await file.read()
     if not content:
-        raise HTTPException(400, "Empty file.")
+        raise HTTPException(400, "Empty file — no data to process.")
+
+    # --- File-size limit (server-side enforcement) ---
+    settings = get_settings()
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    if len(content) > max_bytes:
+        raise HTTPException(
+            413,
+            f"File too large: {len(content) / (1024 * 1024):.1f} MB exceeds "
+            f"the {settings.max_upload_mb} MB limit. "
+            "Split the dataset into smaller files.",
+        )
+
+    # --- Basic CSV-type validation: sniff the content ---
+    first_chunk = content[:4096].decode("utf-8", errors="replace")
+    sniff_sep = "\t" if ext == ".tsv" else ","
+    lines = [l for l in first_chunk.split("\n") if l.strip()]
+    if len(lines) < 1:
+        raise HTTPException(400, "File appears to contain no data rows.")
+    col_count = len(lines[0].split(sniff_sep))
+    if col_count < 2:
+        raise HTTPException(
+            400,
+            "File does not appear to be a valid CSV/TSV: "
+            "the header row contains fewer than 2 columns.",
+        )
     return ext, content
 
 
@@ -80,9 +128,14 @@ def _optional_field_mapping(raw: Optional[str]) -> Optional[Dict[str, str]]:
     try:
         parsed = json.loads(raw)
     except ValueError:
-        raise HTTPException(400, "field_mapping must be a JSON object like {canonical_column: header}.")
-    assert isinstance(parsed, dict), "field_mapping must be a JSON object"
-    return {str(k): str(v) for k, v in parsed.items()}
+        raise HTTPException(
+            400,
+            "field_mapping must be a valid JSON object like "
+            '{"canonical_column": "header"}.',
+        )
+    if not isinstance(parsed, dict):
+        raise HTTPException(400, "field_mapping must be a JSON object, not an array.")
+    return {str(_sanitise_str(k)): str(v) for k, v in parsed.items()}
 
 
 def _analysis_dto(analysis: Dict[str, Any], file_name: str) -> DatasetAnalysisOut:
@@ -192,30 +245,37 @@ async def upload_dataset(
     destination.write_bytes(content)
 
     df = _load_df(destination)
+    if dataset_type:
+        dataset_type = _sanitise_str(dataset_type, max_len=32)
     field_map = _optional_field_mapping(field_mapping)
     analysis, clean_df = analyze_dataframe_full(df, dataset_type, field_map)
 
     rejected = rejection_frame(clean_df, analysis)
     artifacts = persist_artifacts(destination, analysis, clean_df, rejected, list(clean_df.columns))
 
-    dataset = DataSet(
-        name=name,
-        filename=file.filename or stored_name,
-        filepath=str(destination),
-        rows_count=int(len(df)),
-        columns=list(df.columns),
-        dataset_type=analysis["dataset_type"],
-        status=analysis["status"],
-        validation_report={
-            **_legacy_report(analysis),
-            "analysis": analysis,
-            "artifacts": artifacts,
-        },
-        source="upload",
-    )
-    db.add(dataset)
-    db.commit()
-    db.refresh(dataset)
+    # Wrap DB write in a transaction — rollback on any failure
+    try:
+        dataset = DataSet(
+            name=name,
+            filename=file.filename or stored_name,
+            filepath=str(destination),
+            rows_count=int(len(df)),
+            columns=list(df.columns),
+            dataset_type=analysis["dataset_type"],
+            status=analysis["status"],
+            validation_report={
+                **_legacy_report(analysis),
+                "analysis": analysis,
+                "artifacts": artifacts,
+            },
+            source="upload",
+        )
+        db.add(dataset)
+        db.commit()
+        db.refresh(dataset)
+    except Exception:
+        db.rollback()
+        raise HTTPException(500, "Failed to save dataset record. The file was stored but not registered.")
     return dataset
 
 
@@ -299,7 +359,10 @@ def import_dataset(
     field_mapping: Optional[Dict[str, str]] = None,
     db: Session = Depends(get_db),
 ):
-    """Explicit confirm: import validated rows into operational tables."""
+    """Explicit confirm: import validated rows into operational tables.
+
+    Wrapped in a database transaction — either all rows import or none.
+    """
     ds = db.get(DataSet, dataset_id)
     if not ds:
         raise HTTPException(404, "Dataset not found")
@@ -312,16 +375,20 @@ def import_dataset(
         raise HTTPException(400,
                             f"Cannot import: {analysis.get('valid_rows', 0)} valid rows "
                             f"(status '{analysis['status']}'). Fix the invalid rows first.")
-    summary = import_rows(db, analysis, clean_df, ds.name)
-    ds.dataset_type = analysis["dataset_type"]
-    ds.status = "imported"
-    ds.validation_report = {
-        **_legacy_report(analysis),
-        "analysis": analysis,
-        "import_summary": summary,
-    }
-    db.commit()
-    db.refresh(ds)
+    try:
+        summary = import_rows(db, analysis, clean_df, ds.name)
+        ds.dataset_type = analysis["dataset_type"]
+        ds.status = "imported"
+        ds.validation_report = {
+            **_legacy_report(analysis),
+            "analysis": analysis,
+            "import_summary": summary,
+        }
+        db.commit()
+        db.refresh(ds)
+    except Exception:
+        db.rollback()
+        raise HTTPException(500, "Import failed — all changes have been rolled back.")
     return ImportOut(dataset=ds, summary=summary)
 
 
@@ -341,7 +408,7 @@ def revalidate_dataset(dataset_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{dataset_id}/promote", response_model=DataSetOut)
 def promote_dataset(dataset_id: int, db: Session = Depends(get_db)):
-    """Promote this dataset to be the active training source."""
+    """Promote this dataset to be the active training source (transactional)."""
     ds = db.get(DataSet, dataset_id)
     if not ds:
         raise HTTPException(404, "Dataset not found")
@@ -349,13 +416,19 @@ def promote_dataset(dataset_id: int, db: Session = Depends(get_db)):
         raise HTTPException(400, "Stored dataset file is missing")
     settings = get_settings()
     training_path = settings.processed_data_path / "training.csv"
-    df = _load_df(ds.filepath)
-    df.to_csv(training_path, index=False)
-    ds.status = "promoted"
-    ds.validation_report = {**(ds.validation_report or {}),
-                            "promoted_to": str(training_path)}
-    db.commit()
-    db.refresh(ds)
+    try:
+        df = _load_df(ds.filepath)
+        df.to_csv(training_path, index=False)
+        ds.status = "promoted"
+        ds.validation_report = {**(ds.validation_report or {}),
+                                "promoted_to": str(training_path)}
+        db.commit()
+        db.refresh(ds)
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise HTTPException(500, "Promotion failed — changes rolled back.")
     return ds
 
 

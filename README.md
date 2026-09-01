@@ -1,84 +1,203 @@
-# SaltLens · DSS — AI-Driven Digital Twin Decision Support for Climate-Resilient Salt Pan Management
+# SaltLens DSS
 
-A full-stack mini-project that manages salt pans as **digital twins**, marries
-them with **weather forecasts** (Open-Meteo live or an offline mock), scores a
-**harvest-readiness** and **climate-risk** pair of **GradientBoost ML models**
-(with SHAP explanations), trains three **supervised Phase-6 models** — a
-**climate-risk classifier**, a **harvest-readiness classifier** and a
-**harvest-time regressor** on verified field outcomes — runs **"what-if it
-rains?"** simulations, issues **recommendations** for harvest dates, records
-**verified outcomes**, and **feeds corrections back** into model retraining.
-Real-time **sensor readings** (salinity, depth, brine temperature) are
-validated, stored and streamed straight into each pan's **digital twin**,
-refreshing its forecast, readiness/risk scores and advice.
+AI-driven digital twin decision support for climate-resilient salt pan management.
 
-## Stack
+A full-stack application that models salt pans as digital twins, integrates weather forecasts, trains ML models with SHAP explainability, runs what-if rain simulations, generates farmer recommendations, and feeds verified outcomes back into model retraining.
 
-| Layer     | Tech                                                                        |
-|-----------|-----------------------------------------------------------------------------|
-| Backend   | Python 3.9+, FastAPI, SQLAlchemy 2, Alembic, scikit-learn, SHAP, pandas     |
-| Frontend  | Next.js 14 (App Router), React 18, TanStack Query, Recharts, Tailwind CSS    |
-| Storage   | PostgreSQL 16 (Docker) with SQLite fallback for local no-Docker development  |
-| Infra     | Docker Compose (db + backend + frontend)                                    |
+> **Prototype status.** All thresholds, proxy-label formulas and expert rules
+> are **un-calibrated defaults** pending field validation. See
+> [Proxy-Data Disclosure](#proxy-data-disclosure) and
+> [`docs/proxy_label_methodology.md`](docs/proxy_label_methodology.md).
+
+---
+
+## Architecture
 
 ```
-┌────────────┐   weather    ┌──────────────┐   twin physics   ┌───────────────┐
-│  Weather   │─────────────▶│  FastAPI     │─────────────────▶│  Digital Twin │
-│ (Open-     │  forecast    │  /api/*      │  advance_pan_state│  (Postgres)   │
-│  Meteo/mock)│             └─────┬────────┘                   └───────────────┘
-└────────────┘                    │ ML scoring (readiness / risk) + SHAP
-                                  ▼
-                    ┌───────────────────────────┐
-                    │  Simulations · Advice ·   │
-                    │  Outcomes · Evaluation    │
-                    └───────────────────────────┘
-                                  ▲
-                    ┌─────────────┴──────────┐
-                    │  Next.js dashboard ✅  │  port 3000
-                    └────────────────────────┘
+┌────────────────┐   weather    ┌──────────────────┐   twin physics   ┌───────────────────┐
+│   Weather      │─────────────▶│  FastAPI Backend │─────────────────▶│  Digital Twin     │
+│   Service      │  forecast    │  /api/*          │  advance_state   │  (PostgreSQL)     │
+│ (Open-Meteo /  │             └────────┬─────────┘                   └───────────────────┘
+│  mock / CSV)   │                      │ ML scoring + SHAP
+└────────────────┘                      ▼
+                          ┌───────────────────────────┐
+                          │  Simulations · Advice ·   │
+                          │  Outcomes · Evaluation    │
+                          └───────────────────────────┘
+                                    ▲
+                          ┌─────────┴──────────┐
+                          │  Next.js Dashboard │  :3000
+                          └────────────────────┘
 ```
 
-## Quick start (Docker — recommended)
+**Data flow:**
 
-Requires Docker (target ports: **3000 / 8000 / 5432**).
+1. **Upload** CSV datasets (sensor / weather / operations / combined) → validate → import
+2. **Train** 5 model kinds on the training pool (proxy or field labels)
+3. **Sensor readings** update the digital twin in real time
+4. **Weather forecasts** (live or mock) project rain impact
+5. **Simulations** answer "what if it rains 20 mm tomorrow?"
+6. **Recommendations** are generated with SHAP-backed reasons
+7. **Farmer accepts/rejects** → outcome recorded → feedback retrains models
+
+---
+
+## Technology Stack
+
+| Layer     | Technology                                                                         |
+|-----------|------------------------------------------------------------------------------------|
+| Backend   | Python 3.9+, FastAPI, SQLAlchemy 2, Alembic, scikit-learn, SHAP, pandas, joblib   |
+| Frontend  | Next.js 14 (App Router), React 18, TanStack Query, Recharts, Tailwind CSS         |
+| Database  | PostgreSQL 16 (Docker) with SQLite fallback for local no-Docker development        |
+| Infra     | Docker Compose (db + backend + frontend)                                           |
+| Weather   | Open-Meteo API (live), deterministic mock, historical CSV, or auto-fallback        |
+| i18n      | English / Tamil (தமிழ்) toggle for farmer-facing instructions                       |
+
+---
+
+## Folder Structure
+
+```
+salt-pan-dss/
+├── backend/
+│   ├── alembic/                  # DB migrations (5 versions)
+│   │   └── versions/
+│   ├── app/
+│   │   ├── config/               # YAML configs (thresholds, proxy labels)
+│   │   ├── ml/                   # SHAP explainer, model utilities
+│   │   ├── routers/              # 11 FastAPI routers
+│   │   │   ├── datasets.py
+│   │   │   ├── evaluation.py
+│   │   │   ├── models.py
+│   │   │   ├── outcomes.py
+│   │   │   ├── pans.py
+│   │   │   ├── predictions.py
+│   │   │   ├── recommendations.py
+│   │   │   ├── sensors.py
+│   │   │   ├── simulations.py
+│   │   │   └── weather.py
+│   │   ├── services/             # Business logic (18 modules)
+│   │   │   ├── advisor.py
+│   │   │   ├── data_generator.py
+│   │   │   ├── dataset_validator.py
+│   │   │   ├── digital_twin.py
+│   │   │   ├── evaluation.py
+│   │   │   ├── explainability.py
+│   │   │   ├── ingestion.py
+│   │   │   ├── model_targets.py
+│   │   │   ├── predictor.py
+│   │   │   ├── proxy_labels.py
+│   │   │   ├── recommendation_engine.py
+│   │   │   ├── seeding.py
+│   │   │   ├── serializers.py
+│   │   │   ├── simulator.py
+│   │   │   ├── training.py
+│   │   │   └── weather/
+│   │   │       ├── __init__.py
+│   │   │       ├── base.py
+│   │   │       ├── csv_provider.py
+│   │   │       ├── live_provider.py
+│   │   │       └── mock_provider.py
+│   │   ├── config.py             # pydantic-settings
+│   │   ├── database.py           # SQLAlchemy engine + session
+│   │   ├── main.py               # FastAPI app + lifespan
+│   │   └── models.py             # 10 ORM models
+│   ├── tests/                    # pytest suite (15 files, 90+ tests)
+│   ├── Dockerfile
+│   └── requirements.txt
+├── frontend/
+│   ├── app/                      # Next.js App Router
+│   │   ├── globals.css
+│   │   ├── layout.tsx
+│   │   ├── page.tsx              # 9-tab dashboard shell
+│   │   └── providers.tsx
+│   ├── components/
+│   │   ├── panels/               # 14 panel components
+│   │   │   ├── Dashboard.tsx
+│   │   │   ├── PanDetails.tsx
+│   │   │   ├── SimulatePanel.tsx
+│   │   │   ├── DataPanel.tsx
+│   │   │   ├── ModelsPanel.tsx
+│   │   │   ├── PredictPanel.tsx
+│   │   │   ├── RecommendationsPanel.tsx
+│   │   │   ├── OutcomesPanel.tsx
+│   │   │   ├── FeedbackPanel.tsx
+│   │   │   ├── SetupPanel.tsx
+│   │   │   ├── ComparePanel.tsx
+│   │   │   ├── WeatherPanel.tsx
+│   │   │   ├── TwinPanel.tsx
+│   │   │   └── common.tsx
+│   │   └── ui.tsx
+│   ├── lib/
+│   │   ├── api.ts                # Typed API client
+│   │   ├── types.ts              # TypeScript interfaces
+│   │   └── i18n.tsx              # English / Tamil translations
+│   ├── Dockerfile
+│   └── package.json
+├── data/
+│   ├── raw/                      # Uploaded raw files
+│   ├── processed/                # Training pool + feedback CSV
+│   ├── samples/                  # Bundled sample datasets + CSV templates
+│   └── logs/
+├── models/                       # Joblib model artifacts (gitignored)
+├── docs/
+│   └── proxy_label_methodology.md
+├── docker-compose.yml
+├── .env.example
+└── README.md
+```
+
+---
+
+## Installation Requirements
+
+| Requirement | Version | Notes |
+|-------------|---------|-------|
+| Docker | 20.10+ | Recommended path — includes PostgreSQL |
+| Docker Compose | v2+ | `docker compose` (not `docker-compose`) |
+| Python | 3.9+ | Only for local no-Docker development |
+| Node.js | 20+ | Only for local no-Docker frontend dev |
+| PostgreSQL | 16 | Provided by Docker; SQLite fallback available locally |
+
+---
+
+## Docker Startup (Recommended)
 
 ```bash
-cp .env.example .env      # optional; defaults match docker-compose
+cd salt-pan-dss
+cp .env.example .env          # optional — defaults match docker-compose.yml
 docker compose up --build
 ```
 
-- Frontend dashboard: http://localhost:3000
-- API + interactive Swagger: http://localhost:8000/docs
-- Health probe: http://localhost:8000/api/health
+On first boot the backend runs `alembic upgrade head`, then auto-seeds demo data
+(3 salt pans, 5 trained ML models, sample predictions, recommendations) because
+`AUTO_SEED=true`. Restart to re-seed (seeds only when the DB is empty).
 
-On first boot the backend runs `alembic upgrade head`, then auto-seeds demo
-data (3 salt pans, 5 trained ML kinds, sample predictions/recommendations)
-because `AUTO_SEED=true`. Restart to re-seed, because the seed runs only when
-the DB is empty.
+**Services:**
 
-### What "up --build" gives you
+| Service    | Port | Notes |
+|------------|------|-------|
+| `frontend` | 3000 | Next.js production build |
+| `backend`  | 8000 | FastAPI + Swagger docs at `/docs` |
+| `db`       | 5432 | PostgreSQL 16, healthcheck, named volume `pgdata` |
 
-| Service  | Image / build | Port | Notes                                        |
-|----------|---------------|------|----------------------------------------------|
-| `db`     | postgres:16-alpine | 5432 | healthcheck, named volume `pgdata`       |
-| `backend`| `./backend/Dockerfile` | 8000 | `alembic upgrade head` → uvicorn on port 8000 |
-| `frontend`| `./frontend/Dockerfile` (multi-stage, `NEXT_PUBLIC_API_URL` baked at build) | 3000 | `next start` |
+---
 
-## Quick start (local, no Docker)
+## Local Startup (No Docker)
 
 ### Backend (port 8000)
 
 ```bash
 cd backend
-python3.9 -m venv .venv                 # any Python ≥ 3.9 works
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp ../.env.example .env                 # DATABASE_URL defaults to SQLite
-alembic upgrade head                    # create schema (SQLite file: backend/salt_pan_dss.db)
+cp ../.env.example .env        # DATABASE_URL defaults to SQLite
+alembic upgrade head           # creates backend/salt_pan_dss.db
 uvicorn app.main:app --port 8000
 ```
 
-### Frontend (port 3000, in a second terminal)
+### Frontend (port 3000, second terminal)
 
 ```bash
 cd frontend
@@ -86,363 +205,543 @@ npm install
 NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev
 ```
 
-Open http://localhost:3000 (dashboard) or http://localhost:8000/docs (API).
+Open http://localhost:3000 (dashboard) and http://localhost:8000/docs (API).
 
-### Tests
+---
+
+## Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `DATABASE_URL` | `postgresql+psycopg://salt:dss@localhost:5432/salt_pan_dss` | PostgreSQL connection; swap to `sqlite:///./salt_pan_dss.db` for local SQLite |
+| `AUTO_SEED` | `true` | Seed demo pans + train models when the DB is empty on boot |
+| `WEATHER_PROVIDER` | `auto` | `auto` (live w/ mock fallback) / `live` / `mock` / `csv` |
+| `WEATHER_API_KEY` | *(empty)* | API key for real weather; empty = fully mock weather |
+| `WEATHER_MOCK_MODE` | `false` | `true` forces the deterministic offline mock |
+| `WEATHER_CSV_PATH` | `data/samples/weather_historical.csv` | Historical weather CSV for `WEATHER_PROVIDER=csv` |
+| `WEATHER_DEFAULT_LAT` | `19.17` | Default latitude for live forecasts |
+| `WEATHER_DEFAULT_LON` | `74.73` | Default longitude for live forecasts |
+| `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated browser origins allowed |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:3000` | API base the frontend calls (baked at build time) |
+| `DOMAIN_THRESHOLDS_FILE` | `backend/app/config/domain_thresholds.yaml` | Override validation thresholds |
+| `PROXY_LABELS_CONFIG_FILE` | `backend/app/config/proxy_labels.yaml` | Override proxy-label rules |
+| `MAX_UPLOAD_MB` | `50` | Maximum upload file size in MB |
+| `PHYSICAL_EQUIPMENT_CONTROL` | `false` | **Must be false for prototype** — when true, sends commands to real actuators |
+| `ALLOW_AUTO_RETRAIN` | `true` | Allow automatic retraining after feedback ingestion |
+| `DEBUG` | `true` | Verbose logging |
+
+> Demo pans are anchored to a fixed twin date (`2024-05-01`). Forecasts are
+> served by the deterministic mock provider. Set `AUTO_SEED=false` and register
+> your own pans to use live weather.
+
+---
+
+## Database Migration Commands
+
+Alembic migrations live in `backend/alembic/versions/` (5 versions):
+
+| Migration | Description |
+|-----------|-------------|
+| `06ec381186dc` | Initial schema |
+| `b273583dc823` | Phase 2: Normalized operational schema (10 tables) |
+| `60c7818b02fe` | Phase 3: Dataset upload + validation columns |
+| `a1b2c3d4e5f6` | Phase 6: ML training columns on `model_versions` |
+| `c1f0d2e3b4a5` | Phase 10: Recommendation `consequence_if_waited` column |
 
 ```bash
-cd backend && source .venv/bin/activate
-pytest -q          # 78 tests: health, datasets, ingestion, proxies, full training/prediction pipeline, Phase-6 ML, Phase-7 digital-twin + sensors, Phase-8 weather service, Phase-9 rain simulator, Phase-10 explainability
-cd ../frontend
-npm run build      # type-check + lint + production bundle
-npm run lint
+# Run all pending migrations
+cd backend && alembic upgrade head
+
+# Check current migration version
+alembic current
+
+# Roll back one step
+alembic downgrade -1
+
+# Generate a new migration after model changes
+alembic revision --autogenerate -m "description"
 ```
 
-## Configuration (`.env.example`)
+In Docker, migrations run automatically at container startup before uvicorn.
 
-| Var                 | Default                                                | Purpose                                    |
-|---------------------|--------------------------------------------------------|--------------------------------------------|
-| `DATABASE_URL`      | SQLite for local / PostgreSQL in compose               | `postgresql+psycopg://…` or `sqlite:///…`   |
-| `AUTO_SEED`         | `true`                                                 | seed demo pans + train models on empty DB  |
-| `WEATHER_PROVIDER`  | `auto`                                                 | `auto` (live w/ mock fallback) / `live` / `mock` / `csv` |
-| `WEATHER_API_KEY`   | *(empty)*                                             | real weather API key; empty ⇒ the app runs fully on mock weather |
-| `WEATHER_MOCK_MODE` | `false`                                               | `true` forces the deterministic offline mock |
-| `WEATHER_CSV_PATH`  | *(empty → `data/samples/weather_historical.csv`)*     | historical-weather CSV for `WEATHER_PROVIDER=csv` |
-| `CORS_ORIGINS`      | `http://localhost:3000,http://127.0.0.1:3000`          | comma-separated browser origins allowed    |
-| `NEXT_PUBLIC_API_URL` | `http://localhost:8000`                              | API base the frontend bundle calls         |
+---
 
-> Demo pans are anchored to a fixed *twin date* (`demo_today = 2024-05-01`).
-> Their forecasts are therefore served by the deterministic **mock** weather
-> provider (live 2026 responses would be physically inconsistent with the
-> twin). Set `AUTO_SEED=false` and register your own pans to use the live feed.
+## Dataset Formats
 
-## API surface (see `/docs` for the full OpenAPI spec)
+Four dataset types are supported. Type is auto-detected from CSV headers
+(overridable via `dataset_type` parameter).
 
-| Method | Path                                | Description                                    |
-|--------|-------------------------------------|------------------------------------------------|
-| GET    | `/api/health`                       | Health probe (app, environment, database)      |
-| GET    | `/api/system/status`                | Counts + per-kind model availability           |
-| GET/POST| `/api/datasets`                    | Upload / validate / preview / import / promote datasets |
-| GET    | `/api/datasets/thresholds`           | Logical-range + outlier config (prototype)     |
-| POST   | `/api/datasets/preview`              | Analyse a file without persisting (dry run)    |
-| POST   | `/api/datasets/upload`               | Store + validate; block nothing, show changes  |
-| GET    | `/api/datasets/{id}/analysis`        | Full quality report (mappings, rejects, churn) |
-| GET    | `/api/datasets/{id}/invalid_rows`    | CSV of rejected rows with per-row reasons      |
-| POST   | `/api/datasets/{id}/import`          | Confirm import of valid rows into operational tables |
-| GET/POST| `/api/pans`                        | Register pans, read/write their twin state     |
-| GET    | `/api/pans/{pan_id}/digital-twin`   | Full operational twin snapshot (salinity, depth, brine temp, volume, dissolved salt mass, forecast rain + probability, post-rain depth/salinity, evaporation, readiness, climate risk, last operation, last update) |
-| POST   | `/api/sensors/readings`             | Ingest a pan-sensor reading: validate → save → forecast → update twin → predict (if an active model exists) → refresh recommendations |
-| POST   | `/api/pans/{pan_id}/simulate-rain` | What-if: a single rain event on the pan's current twin state (`rainfall_mm` 1–300): before/after salinity & depth, rain volume, LOW/MEDIUM/HIGH risk, forecast harvest-delay hours, recommended action |
-| GET    | `/api/weather/forecast`             | `scenario=auto|mock|live|csv`, force refresh      |
-| POST   | `/api/weather/actual`               | Record observed rainfall for a stored forecast day (forecast stays untouched) |
-| POST   | `/api/predictions/run`              | 7-day readiness + risk forecast with SHAP (rejects `409` with no active model) |
-| POST   | `/api/simulations/what-if-rain`     | "Rain tomorrow?" twin simulation with impact   |
-| GET/POST| `/api/recommendations`             | Generate rule-based harvest advice             |
-| POST   | `/api/recommendations/{id}/respond` | Farmer accept/decline with notes               |
-| POST   | `/api/outcomes`                     | Record verified field outcome                  |
-| GET    | `/api/evaluation/summary`           | Precision/recall, readiness MAE, yield MAE     |
-| POST   | `/api/evaluation/feedback`          | Fold outcomes into retraining pool + twin      |
-| GET    | `/api/models/label-status`          | Proxy/field label provenance + warning banner  |
-| GET/POST| `/api/models`/`/api/models/train`  | List models, train (all five kinds or one); `ModelOut` carries `uses_proxy_labels`, split dates, test rows, metrics, training errors |
-| GET    | `/api/models/latest`                 | Newest trained version per model kind          |
-| POST   | `/api/models/{id}/activate`          | Activate a version (deactivates same-kind siblings) |
+### Sensor Dataset
 
-## Database schema (Phase 2 — normalized)
+Required columns:
 
-Operational data lives in ten tables. Migrations are in `backend/alembic`
-(current head `a1b2c3d4e5f6`, which adds the Phase-6 ML-training columns to
-`model_versions`; older databases are also synced idempotently at startup by
-`ensure_schema`).
+| Column | Description | Unit |
+|--------|-------------|------|
+| `timestamp` | Reading time (ISO 8601) | datetime |
+| `pan_id` | Pan identifier (e.g. PAN-1) | string |
+| `pan_area_m2` | Pan surface area | m² |
+| `salinity_g_l` | Brine salinity | g/L |
+| `water_depth_cm` | Water depth | cm |
+| `brine_temperature_c` | Brine temperature | °C |
+| `humidity_pct` | Relative humidity | % |
 
-| Table                | Purpose                                                        |
-|----------------------|----------------------------------------------------------------|
-| `datasets`           | Registered data sources (uploads, training pool, feedback)     |
-| `pans`               | Salt pans: `pan_code`, name, lat/lon, `area_m2`               |
-| `sensor_readings`    | Raw in-pan measurements (brine density, depth, thickness, etc.)|
-| `weather_readings`   | Per-day forecast rows (shared cache + per-pan; `forecast_rain_mm` + `actual_rainfall_mm` kept separate) |
-| `digital_twin_states`| Twin snapshots (`state_json` + derived readiness/risk columns) |
-| `model_versions`     | Trained artifacts + metrics per `kind` (`GradientBoostingRegressor`, `RandomForestClassifier`, `RandomForestRegressor`), track `uses_proxy_labels`, split dates, test rows, training errors, active flag |
-| `predictions`        | Model runs; legacy fields stashed in `input_snapshot_json`     |
-| `recommendations`    | Rule-based advice (status: pending/accepted/declined)          |
-| `operation_events`   | Farmer responses (`farmer_notes`), related to recommendations  |
-| `harvest_outcomes`   | Verified field outcomes (+ `details_json` for extra fields)    |
+### Weather Dataset
 
-Legacy API-facing ids (`pan_id`, `prediction_id`, …) keep their names on the
-wire — the routers (`pans`, `predictions`, `recommendations`, `outcomes`,
-`evaluation`, `weather`, `models`) synthesize the old response shapes from the
-normalized tables via `app/services/serializers.py`.
+Required columns:
 
-## Dataset upload & validation (Phase 3)
+| Column | Description | Unit |
+|--------|-------------|------|
+| `timestamp` | Observation time | datetime |
+| `pan_id` or `location` | Pan ID or location name | string |
+| `forecast_rain_mm` | Forecast rainfall (24h) | mm |
+| `rain_probability_pct` | Rain probability | % |
+| `actual_rainfall_mm` | Actual observed rainfall | mm |
+| `air_temperature_c` | Air temperature | °C |
+| `humidity_pct` | Relative humidity | % |
+| `wind_speed_m_s` | Wind speed | m/s |
 
-Uploading never mutates your data silently. `POST /api/datasets/preview`
-runs the full analysis without persisting anything, so you see exactly what
-will change before confirming.
+### Operations Dataset
 
-- **Type detection** — `sensor`, `weather`, `operations` or `combined`
-  (auto-detected from headers; overridable via `dataset_type`).
-- **Column normalisation** — fuzzy header aliases map onto canonical columns
-  (e.g. `Forecast Rain (mm/24h)` → `forecast_rain_mm`). Re-usable
-  **unit conversions** are applied transparently and reported
-  (`wind_speed_kmh` → `wind_speed_ms` ÷ 3.6, humidity fraction → %).
-- **Timestamp parsing, duplicate detection** (pan + timestamp), missing-value
-  counts, **logical-range validation** and a **statistical outlier report**
-  (IQR, report-only — never auto-removed).
-- **Per-row reasons** — rows that fail validation are excluded from import with
-  a downloadable CSV of rejected rows (`/api/datasets/{id}/invalid_rows`).
-- **Import is an explicit confirm** — `POST /api/datasets/{id}/import` writes
-  the valid rows into `sensor_readings` / `weather_readings` /
-  `operation_events` / `harvest_outcomes`, auto-creating missing pans.
+Required columns:
 
-Required columns per type:
+| Column | Description | Unit |
+|--------|-------------|------|
+| `event_timestamp` | Operation time | datetime |
+| `pan_id` | Pan identifier | string |
+| `event_type` | Operation type (drain / transfer / pump / protect / harvest) | string |
+| `transferred_volume_l` | Volume transferred | L |
+| `pump_duration_min` | Pump duration | min |
+| `protection_applied` | Protection used (true/false) | bool |
+| `harvest_date` | Harvest date | date |
+| `actual_yield_kg` | Harvest yield | kg |
+| `salt_purity_pct` | Salt purity | % |
+| `yield_loss_pct` | Yield loss | % |
 
-| Type | Required columns |
-|------|------------------|
-| `sensor` | `timestamp, pan_id, pan_area_m2, salinity_g_l, water_depth_cm, brine_temperature_C, humidity_pct` |
-| `weather` | `timestamp, pan_id (or location), forecast_rain_mm, rain_probability_pct, actual_rainfall_mm, air_temperature_C, humidity_pct, wind_speed_m_s` |
-| `operations` | `event_timestamp, pan_id, event_type, transferred_volume_L, pump_duration_min, protection_applied, harvest_date, actual_yield_kg, salt_purity_pct, yield_loss_pct` |
-| `combined` | legacy master columns (`pan_id, date, temperature_c, humidity_pct, wind_speed_kmh, rainfall_mm, sunshine_hours, water_level_cm, brine_density_be, salt_thickness_mm, days_since_last_rain`) |
+### Combined Dataset (Legacy Master)
 
-**Logical-range thresholds are configurable, not hard-coded.** They live in
-`backend/app/config/domain_thresholds.yaml`, explicitly marked *prototype*
-(`meta.status: prototype`) pending field calibration, and can be overridden at
-runtime with `DOMAIN_THRESHOLDS_FILE=/path/to/my_calibrated.yaml`.
-`min`/`max` are hard bounds (exceeding them rejects the row); `outlier_band`
-is the IQR multiplier for the report-only outlier flag.
+Required columns:
 
-## Missing real labels (Phase 5 — proxy / simulation mode)
+| Column | Description | Unit |
+|--------|-------------|------|
+| `pan_id` | Pan identifier | string |
+| `date` | Observation date | date |
+| `temperature_c` | Temperature | °C |
+| `humidity_pct` | Humidity | % |
+| `wind_speed_kmh` | Wind speed | km/h (auto-converted to m/s) |
+| `rainfall_mm` | Rainfall | mm |
+| `sunshine_hours` | Sunshine duration | hours |
+| `water_level_cm` | Water level | cm |
+| `brine_density_be` | Brine density | °Bé |
+| `salt_thickness_mm` | Salt bed thickness | mm |
+| `days_since_last_rain` | Dry days counter | days |
 
-Real field measurements are not always available for the ML targets
-(`harvest_readiness`, `climate_risk`, `days_to_harvest`, `yield_loss_pct`,
-`recommended_action`). The training pipeline runs in two modes:
+> Column headers are fuzzy-matched via aliases in
+> `backend/app/config/domain_thresholds.yaml`. For example,
+> `Forecast Rain (mm/24h)` maps to `forecast_rain_mm`.
 
-- **Field-data mode** — rows that carry a field provenance marker are used
-  unchanged: a `label_source == "field"` column, a per-label
-  `*_source == "field"` column, or data ingested from the verified feedback
-  loop (`source == "feedback"`).
-- **Proxy / simulation mode** — everything else is synthesised with
-  documented mass-balance calculations and configurable expert rules and is
-  stamped `*_source == "proxy"`. Proxy values are **never** presented as field
-  measurements.
+### Outcome / Feedback Dataset (for `POST /api/outcomes`)
 
-Every trained `ModelVersion` records `uses_proxy_labels` (DB column + API
-`ModelOut.uses_proxy_labels` + artifact `.meta.json`). It is `true` whenever
-*any* training row used a proxy label (including mixed field/proxy datasets).
-While it is `true` the UI shows a persistent banner:
+| Column | Description | Unit |
+|--------|-------------|------|
+| `pan_id` | Pan identifier | string |
+| `harvest_date` | Harvest date | date |
+| `actual_yield_kg` | Actual yield | kg |
+| `salt_purity_pct` | Salt purity | % |
+| `actual_rainfall_mm` | Observed rainfall | mm |
+| `rain_damage` | Rain damage occurred (true/false) | bool |
+| `yield_loss_pct` | Yield loss | % |
+| `outcome_notes` | Free-text notes | string |
+
+---
+
+## Model Training Instructions
+
+### Via the UI
+
+1. Open the **Models** tab
+2. Click **Train All Models** (trains all 5 kinds) or select a specific kind
+3. View training results: dataset used, train/test split, metrics, proxy flag
+4. Activate the desired model version
+
+### Via the API
+
+```bash
+# Train all 5 model kinds
+curl -X POST http://localhost:8000/api/models/train
+
+# Train a specific kind
+curl -X POST http://localhost:8000/api/models/train \
+  -H "Content-Type: application/json" \
+  -d '{"model_kind": "climate_risk_classifier"}'
+
+# List trained models
+curl http://localhost:8000/api/models
+
+# Activate a specific version
+curl -X POST http://localhost:8000/api/models/{id}/activate
+```
+
+### Model Kinds
+
+| Kind | Algorithm | Target | Type |
+|------|-----------|--------|------|
+| `harvest_readiness` | GradientBoostingRegressor | `harvest_readiness` (0–1) | Scorer |
+| `climate_risk` | GradientBoostingRegressor | `climate_risk` (0–1) | Scorer |
+| `climate_risk_classifier` | RandomForestClassifier | `risk_level` (LOW/MEDIUM/HIGH) | Classifier |
+| `harvest_readiness_classifier` | RandomForestClassifier | `harvest_ready` (0/1) | Classifier |
+| `harvest_time_regressor` | RandomForestRegressor | `hours_to_harvest` | Regressor |
+
+**Time-based split:** All models use an 80/20 chronological split — no future
+data leaks into training.
+
+**Proxy vs field labels:** Models trained on proxy (synthesised) labels report
+`uses_proxy_labels: true`. The UI shows a persistent banner:
 
 > **PROXY/SIMULATED MODEL — NOT YET FIELD VALIDATED**
 
-The exact formulas, constants and the **target-leakage** note (metrics against
-features that directly produced a label are *self-consistency* checks, not
-independent validation) are in
-[`docs/proxy_label_methodology.md`](docs/proxy_label_methodology.md). The expert
-rules are configurable, not hard-coded, in
-`backend/app/config/proxy_labels.yaml` and can be overridden at runtime with
-`PROXY_LABELS_CONFIG_FILE=/path/to/my_calibrated.yaml`.
+The `harvest_time_regressor` is **deferred** when no verified field outcomes
+exist in the training pool.
 
-## Supervised ML training (Phase 6)
+---
 
-Beyond the two legacy gradient-boosting scorers, the pipeline trains three
-Phase-6 models through the same `POST /api/models/train` endpoint:
-`climate_risk_classifier` (`risk_level` → LOW/MEDIUM/HIGH), 
-`harvest_readiness_classifier` (`harvest_ready` → 0/1) and
-`harvest_time_regressor` (`hours_to_harvest`).
+## Weather Configuration
 
-- **Targets** — the classifiers use real field values where provenance is
-  recorded and fall back to the Phase-5 proxy signals otherwise
-  (`climate_risk_class` binning, `harvest_readiness >= 0.55`), stamping each
-  row's source. The regressor is trained **only on verified field outcomes** —
-  proxy hours are never fabricated. On a synthetic demo dataset it has no
-  verified rows and is **deferred** with
-  `["Insufficient verified outcome data."]`.
-- **Time-based split** — every kind is split chronologically (80/20) so no
-  future observation ever leaks into the training past
-  (`ModelOut.split.future_leakage_prevented`).
-- **Metrics** — classifiers report accuracy / macro precision / recall / F1
-  plus the confusion matrix and per-class train/test distribution; the
-  regressors report MAE / RMSE / R². Artifacts are versioned with joblib
-  (`models/model_kind_vN.joblib`).
-- **Activation** — `POST /api/models/{id}/activate` makes a version active and
-  deactivates its same-kind siblings; freshly trained models start active.
-- **Prediction gate** — `POST /api/predictions/run` returns `409` when no
-  active model exists (`/api/system/status` exposes `any_active_model`), and
-  the frontend disables *Run prediction* accordingly.
+| Mode | `WEATHER_PROVIDER` | Behaviour |
+|------|-------------------|-----------|
+| Auto | `auto` | Try live API, fall back to deterministic mock |
+| Live | `live` | Require real API; mock fallback on outages |
+| Mock | `mock` | Always built-in deterministic offline generator |
+| CSV | `csv` | Serve day-by-day from a historical weather CSV |
 
-The training page shows the dataset used, training/test row counts, split date
-range, feature list, metrics, proxy-label flag, model version and training
-errors.
+- `WEATHER_API_KEY` empty → app runs fully on mock weather
+- `WEATHER_MOCK_MODE=true` → force mock from any configuration
+- `WEATHER_CSV_PATH` → path to historical CSV (missing file falls back to mock)
+- **Forecast and observed rainfall are stored separately** — `forecast_rain_mm`
+  never mutates; `actual_rainfall_mm` is stamped via `POST /api/weather/actual`
 
-## Digital twin + sensor readings (Phase 7)
+---
 
-Every salt pan has an operational **digital twin**:
+## Demo Workflow
 
-```
-GET /api/pans/{pan_id}/digital-twin
-```
+With `AUTO_SEED=true` (default), the following is pre-loaded on first boot:
 
-which returns the current **salinity (g/L)**, **water depth (cm)**,
-**brine temperature (°C)**, **brine volume (m³)**, **estimated dissolved salt
-mass (kg)**, **forecast rainfall** (next 24h + 7-day window, mm) with **rain
-probability (%)**, **predicted post-rain depth** and **predicted post-rain
-salinity**, **evaporation estimate (mm/day)**, **harvest readiness**,
-**climate risk**, the pan's **last operation** and its **last update**.
+### 1. Explore the Dashboard
 
-In-situ telemetry is streamed in through:
+Open http://localhost:3000 → **Dashboard** tab shows 3 demo pans with
+digital-twin state, readiness scores, and climate risk.
 
-```
-POST /api/sensors/readings
-    { "pan_code": "PAN-1", "salinity_g_l": 245.2, "water_depth_cm": 6.8,
-      "brine_temperature_c": 30.1, "ec_ms_cm": 205.0, ... }
-```
+### 2. View a Pan's Digital Twin
 
-The payload is **validated** against physical/domain ranges (rejects
-`422`), saved, then piped end-to-end: the **latest weather forecast** is
-resolved for the pan, the **digital twin is updated** with the measured state,
-a **prediction is run when an active model exists** (skipped cleanly when the
-model gate is closed), and the pan's recommendations are **refreshed** —
-previous pending advice is expired and a fresh top-3 set is issued. Sensed
-salinity is converted to the internal °Bé density (÷ 9.5) so the twin physics,
-forecast and ML features stay consistent.
+**Pans** tab → click a pan → view salinity, depth, brine temperature, volume,
+dissolved salt mass, forecast rain, predicted post-rain state, evaporation,
+readiness, and climate risk.
 
-## Weather service (Phase 8 — pluggable providers)
+### 3. Run a Rain Simulation
 
-Forecasts come from a small provider interface in `app/services/weather/`,
-selected at runtime from the environment:
+**Simulator** tab → select a pan → set rainfall to **20 mm** → click
+**Simulate**. View before/after salinity & depth, risk change, harvest delay,
+and recommended action.
 
-```
-auto   (default)  try the real weather API, fall back to a deterministic mock
-live              require the real weather API (mock fallback on outages)
-mock              always the built-in deterministic offline generator
-csv               serve day-by-day values from a historical-weather CSV
-```
+### 4. Upload a Dataset
 
-Decisions are environment-driven — **no API keys live in source code**:
+**Dataset** tab → choose a CSV file → click **Upload** → review validation
+report → click **Import** to confirm.
 
-- `WEATHER_PROVIDER` selects the mode; `WEATHER_API_KEY` carries the key and,
-  when empty, the application **still runs completely on mock weather**.
-- `WEATHER_MOCK_MODE=true` force-activates mock from any configuration.
-- `WEATHER_CSV_PATH` sets the history file for `csv` (default
-  `data/samples/weather_historical.csv`); a missing or unreadable CSV (or a
-  requested day past the records) falls back to mock continuation, reported as
-  `source=csv` / `csv+mock` / `mock`.
+### 5. Train Models
 
-**Forecast and observed rainfall are stored separately.** Every
-`weather_readings` row keeps `forecast_rain_mm` (never mutates) and
-`actual_rainfall_mm` (stamped via `POST /api/weather/actual`, matched to the
-pan's newest forecast batch). Both are returned by `GET /api/weather/forecast`
-and the digital-twin snapshot; the legacy `rainfall_mm = forecast_rain_mm`
-field is preserved for the frontend. A provider outage in `auto`/`live` mode
-emits mock data labelled `… (fallback)`, so the platform never goes dark.
+**Models** tab → click **Train All** → review metrics and proxy flag → activate
+the best version.
 
-## Rain-impact simulator (Phase 9)
+### 6. Generate a Prediction
 
-`POST /api/pans/{pan_id}/simulate-rain` answers a single what-if question
-against the pan's **current** digital-twin state — no trained models needed, so
-it works for any registered pan:
+**Predictions** are auto-generated when sensor readings arrive (if an active
+model exists), or manually via `POST /api/predictions/run`.
 
-```
-POST /api/pans/PAN-3/simulate-rain          GET result
-  { "rainfall_mm": 20 }                       {
-                                                "pan_id": "PAN-3",
-                                                "current_salinity_g_l": 245.0,
-                                                "current_depth_cm": 8.0,
-                                                "current_volume_m3": 40.0,
-                                                "rainfall_mm": 20.0,
-                                                "rain_volume_m3": 10.0,
-                                                "predicted_depth_after_rain_cm": 10.0,
-                                                "predicted_salinity_after_rain_g_l": 196.0,
-                                                "risk_before": "LOW",
-                                                "risk_after": "HIGH",
-                                                "predicted_harvest_delay_hours": 72.0,
-                                                "recommended_action": "store_brine",
-                                                "recommendation": "Store the concentrated…"
-                                              }
-```
+### 7. Get a Recommendation
 
-The physics is transparent and deterministic (`app/services/simulator.py`):
+**Recommendations** tab → view generated advice with:
+- Recommended action + deadline
+- Three SHAP-backed reasons
+- Confidence percentage
+- Consequence if the farmer waits
+- Step-by-step instructions
 
-- **Post-rain depth** = depth + rainfall/10; **post-rain salinity** = mass-conserving
-  dilution (`salinity × depth ÷ depth_after`) — the same conventions the twin's
-  own projections use, so numbers agree with the digital twin & forecasts.
-- **Risk** (`LOW < 0.25 ≤ MEDIUM < 0.50 ≤ HIGH`) blends three dimensionless
-  drivers: how big the event is relative to the pan depth, the relative drop in
-  salinity, and how far the pan overflows its safe depth.
-- **Harvest delay (h)** = the longer of (rebuild the salt the storm dissolved,
-  at ~0.9 mm/day deposition) and (evaporate the rain column, at ~7 mm/day).
-- **Recommended action** mirrors the DSS advisory order
-  `harvest_now > store_brine > protect_pan > monitor`, keyed to the post-event
-  risk and the current brine state.
+### 8. Accept or Reject
 
-Runs are **stateless** — the simulation never writes to the twin; refresh the
-page or re-run and the pan state is untouched. The **What-if** tab in the UI
-adds a one-click control card (pan selector, 0–100 mm rainfall slider, Simulate
-button) showing before/after salinity & depth charts, a risk comparison and the
-recommended action on top of the existing ML-scenario panel.
+**Recommendations** tab → click **Accept** or **Reject** → add optional notes.
 
-## Explainability (Phase 10)
+### 9. Record an Outcome
 
-Every prediction is explained the way a farmer would, not the way a bag of
-models would. The explainer is **SHAP `TreeExplainer`** (works on the Random
-Forest classifiers/regressors and the GradientBoosting scorers alike), computed
-locally for the pan's current row and returned as the **top three factors per
-model** plus two weather-life context signals:
+**Outcomes** tab → record actual yield, purity, rainfall, damage, and loss.
 
-```
-"explain": {
-  "method": "shap.TreeExplainer",
-  "harvest_readiness": { "factors": [                       // top 3, by |SHAP|
-      { "feature": "brine_density_be",
-        "contribution": 0.42, "weight_pct": 38.1,
-        "explanation": "The brine is well concentrated" }, ... ] },
-  "climate_risk":       { "factors": [ ... ] },
-  "context": [                                              // next-24h plain English
-      { "feature": "forecast_rain_24h_mm",
-        "value": 18.0,
-        "explanation": "High rainfall expected during the next 24 hours" },
-      { "feature": "predicted_salinity_after_rain",
-        "value": 174.2,
-        "explanation": "Rain is expected to dilute the brine" } ]
-}
+### 10. View Feedback
+
+**Feedback** tab → see how outcomes compare to predictions → trigger model
+retraining with the new data.
+
+---
+
+## API Endpoint List
+
+| Method | Path | Description |
+|--------|------|-------------|
+| **System** | | |
+| GET | `/api/health` | Health probe (app, environment, database) |
+| GET | `/api/system/status` | Counts + per-kind model availability |
+| GET | `/api/system/safety` | Equipment safety guardrail status |
+| **Datasets** | | |
+| GET | `/api/datasets` | List uploaded datasets |
+| GET | `/api/datasets/thresholds` | Logical-range + outlier config |
+| POST | `/api/datasets/preview` | Analyse file without persisting |
+| POST | `/api/datasets/upload` | Store + validate a CSV |
+| GET | `/api/datasets/{id}` | Dataset detail |
+| GET | `/api/datasets/{id}/analysis` | Full quality report |
+| GET | `/api/datasets/{id}/preview` | Preview imported rows |
+| GET | `/api/datasets/{id}/invalid_rows` | Download rejected rows CSV |
+| POST | `/api/datasets/{id}/import` | Confirm import of valid rows |
+| POST | `/api/datasets/{id}/validate` | Re-run validation |
+| POST | `/api/datasets/{id}/promote` | Promote to training pool |
+| GET | `/api/datasets/{id}/file` | Download original file |
+| **Pans** | | |
+| GET | `/api/pans` | List all pans |
+| POST | `/api/pans` | Register a new pan |
+| GET | `/api/pans/{id}` | Pan detail |
+| PATCH | `/api/pans/{id}` | Update pan properties |
+| GET | `/api/pans/{id}/digital-twin` | Full digital twin snapshot |
+| GET | `/api/pans/{id}/twin` | Twin state (legacy) |
+| POST | `/api/pans/{id}/twin` | Update twin state |
+| POST | `/api/pans/{id}/simulate-rain` | What-if rain simulation |
+| POST | `/api/pans/{id}/predict` | Run prediction for a pan |
+| GET | `/api/pans/{id}/snapshots` | Twin history snapshots |
+| GET | `/api/pans/{id}/sensors` | Sensor readings for a pan |
+| GET | `/api/pans/{id}/operations` | Operations for a pan |
+| **Models** | | |
+| GET | `/api/models` | List all model versions |
+| GET | `/api/models/latest` | Newest version per kind |
+| GET | `/api/models/label-status` | Proxy/field label provenance |
+| POST | `/api/models/train` | Train models (all kinds or one) |
+| GET | `/api/models/{id}` | Model version detail |
+| GET | `/api/models/{id}/shap` | SHAP values for a model |
+| POST | `/api/models/{id}/activate` | Activate a version |
+| **Weather** | | |
+| GET | `/api/weather/forecast` | Get weather forecast |
+| POST | `/api/weather/actual` | Record observed rainfall |
+| **Predictions** | | |
+| POST | `/api/predictions/run` | Run 7-day readiness + risk forecast |
+| GET | `/api/predictions` | List predictions |
+| GET | `/api/predictions/{id}` | Prediction detail with SHAP explain |
+| **Simulations** | | |
+| POST | `/api/simulations/what-if-rain` | What-if rain twin simulation |
+| **Recommendations** | | |
+| GET | `/api/recommendations` | List recommendations |
+| POST | `/api/recommendations/generate` | Generate rule-based advice |
+| GET | `/api/recommendations/active` | Active recommendations |
+| GET | `/api/recommendations/{id}` | Recommendation detail |
+| POST | `/api/recommendations/{id}/accept` | Farmer accepts |
+| POST | `/api/recommendations/{id}/reject` | Farmer rejects |
+| POST | `/api/recommendations/{id}/complete` | Mark completed |
+| POST | `/api/recommendations/{id}/respond` | Accept/decline with notes |
+| **Sensors** | | |
+| POST | `/api/sensors/readings` | Ingest sensor reading → update twin |
+| **Outcomes** | | |
+| POST | `/api/outcomes` | Record verified field outcome |
+| GET | `/api/outcomes` | List outcomes |
+| GET | `/api/outcomes/{id}` | Outcome detail |
+| POST | `/api/outcomes/{id}/verify` | Verify an outcome |
+| **Evaluation** | | |
+| GET | `/api/evaluation/comparison` | Prediction vs outcome comparison |
+| GET | `/api/evaluation/summary` | Precision/recall, MAE metrics |
+| POST | `/api/evaluation/feedback` | Fold outcomes into retraining |
+| POST | `/api/evaluation/retrain` | Trigger retraining |
+
+Full OpenAPI spec: http://localhost:8000/docs
+
+---
+
+## Test Commands
+
+### Backend Tests
+
+```bash
+cd backend
+source .venv/bin/activate
+pytest -v                  # run all tests
+pytest -q                  # quiet mode
+pytest tests/test_phase15_integration.py  # integration tests
 ```
 
-Technical names are never the headline. A glossary
-(`app/services/explainability.py`) converts every model feature into plain
-language — including the two canonical mappings required by spec:
-`forecast_rain_24h_mm → "High rainfall expected during the next 24 hours"` and
-`predicted_salinity_after_rain → "Rain is expected to dilute the brine"`. The
-technical name stays as a muted secondary line for auditability, and the
-signed SHAP value + share of signal (`weight_pct`) quantify each driver.
+**Test files (15):**
 
-Every generated recommendation is a complete six-part decision card:
+| File | Tests | Coverage |
+|------|-------|----------|
+| `test_health.py` | 2 | Health + system status |
+| `test_datasets.py` | 5 | Upload, validation, garbage data |
+| `test_ingestion.py` | 9 | Column mapping, unit conversion, duplicates |
+| `test_proxy_labels.py` | 10 | Determinism, formulas, leakage map |
+| `test_pipeline.py` | 2 | End-to-end pipeline, what-if regression |
+| `test_phase6_training.py` | 8 | Time-split, classifiers, regressor, activation |
+| `test_phase7_digital_twin.py` | 7 | Sensors, twin update, pan-code routing |
+| `test_phase8_weather.py` | 9 | Mock, live, CSV, fallback, forecast storage |
+| `test_phase9_simulator.py` | 7 | Physics, risk monotonicity, unit invariants |
+| `test_phase10_explainability.py` | 9 | Glossary, SHAP factors, 6-part contract |
+| `test_phase13_feedback.py` | 3 | Feedback loop, retrain, noop |
+| `test_phase14_seed.py` | 5 | Demo data, 30-day sensors, weather |
+| `test_phase15_integration.py` | ~55 | Full stack across 12 test classes |
 
-1. **Recommended action** (`recommendation_type` / title),
-2. **Action deadline** (`action_deadline`),
-3. **Three reasons** (`reasons`, the third humanised from the top SHAP drivers),
-4. **Confidence** (`confidence_pct`),
-5. **Predicted consequence if the farmer waits** (`consequence_if_waited`,
-   newly persisted via the Phase-10 migration),
-6. **Step-by-step instructions** (`instructions`).
+### Frontend Build
 
-The API surface is unchanged — `POST /api/predictions/run` now also returns
-`explain`, and `/api/recommendations*` items carry the new fields. The UI shows
-readiness/risk driver cards with human explanations and the six-part
-recommendation layout (confidence + deadline badges, reasons, "if you wait…"
-consequence, numbered steps).
-
-## Repository layout
-
+```bash
+cd frontend
+npm run build       # type-check + lint + production bundle
+npm run lint        # ESLint only
+npm test            # Jest (passWithNoTests)
 ```
-backend/
-  alembic/            # migrations (initial, Phase-2 normalized schema, Phase-3 dataset_type)
-  app/                # FastAPI app: routers/, services/, ml/
-  tests/              # pytest suite (78 tests)
-data/
-  samples/            # etc. bundled sample dataset (salt_pan_dataset.csv)
-  processed/          # training pool + feedback CSV (gitignored)
-frontend/
-  app/                # Next.js App Router (tabbed dashboard)
-  components/         # UI kit + panel components
-  lib/                # typed API client (lib/api.ts, lib/types.ts)
-models/               # joblib artifacts after training (gitignored)
-docker-compose.yml
-.env.example
-```
+
+---
+
+## Known Limitations
+
+1. **Prototype thresholds** — all validation bounds in
+   `domain_thresholds.yaml` are un-calibrated defaults pending field
+   verification with real instruments and pan geometries.
+
+2. **Proxy labels** — models trained without verified field outcomes use
+   synthesised mass-balance labels. Metrics against proxy-labelled data are
+   **self-consistency checks**, not independent validation.
+
+3. **No authentication** — the application has no user authentication or
+   role-based access control. All endpoints are open.
+
+4. **No real-time WebSocket** — sensor readings are polled via HTTP; there is
+   no push notification for twin state changes.
+
+5. **Harvest time regressor deferred** — without verified field outcomes in the
+   training pool, the `harvest_time_regressor` cannot train and is skipped.
+
+6. **Fixed demo twin date** — seeded demo pans are anchored to `2024-05-01`.
+   Live weather responses would be physically inconsistent with the demo twin
+   state.
+
+7. **Single-tenant** — designed for one operator. No multi-user, multi-tenant,
+   or row-level security.
+
+8. **SQLite limitations** — the local no-Docker SQLite fallback lacks
+   concurrent-write performance and JSON query features of PostgreSQL.
+
+9. **No physical actuator integration** — `PHYSICAL_EQUIPMENT_CONTROL` is
+   `false` by default. Real pump/gate control requires a certified safety
+   review.
+
+10. **Upload size** — default max 50 MB (`MAX_UPLOAD_MB`). Large historical
+    datasets may need this increased.
+
+---
+
+## Proxy-Data Disclosure
+
+The application distinguishes three types of data:
+
+### Field Data
+Real measurements from physical sensors or verified harvest records. Identified
+by `label_source == "field"`, per-label `*_source == "field"` columns, or
+`source == "feedback"` from the verified outcome loop.
+
+### Proxy Data
+Values synthesised from documented mass-balance calculations and configurable
+expert rules when field measurements are unavailable. Every proxy value is
+stamped `*_source == "proxy"`. See `backend/app/config/proxy_labels.yaml` and
+[`docs/proxy_label_methodology.md`](docs/proxy_label_methodology.md).
+
+### Simulated Data
+Weather forecasts from the mock provider, digital-twin state projections, and
+what-if rain simulation results. These are physics-based computations, not
+field observations.
+
+**UI transparency:** When any active model uses proxy labels, the dashboard
+displays a persistent amber banner:
+
+> **PROXY/SIMULATED MODEL — NOT YET FIELD VALIDATED**
+
+The `ModelVersion.uses_proxy_labels` flag (DB column + API + artifact metadata)
+is `true` whenever *any* training row used a proxy label, including mixed
+field/proxy datasets.
+
+---
+
+## Field-Validation Requirements
+
+Before production deployment, the following must be completed:
+
+1. **Calibrate `domain_thresholds.yaml`** — replace prototype bounds with
+   instrument-specific ranges from the actual sensor hardware and local pan
+   geometry. Flip `meta.status` from `prototype` to `calibrated`.
+
+2. **Calibrate `proxy_labels.yaml`** — tune mass-balance constants
+   (`density_base_be`, `rain_weight`, `dissolution_per_rain_mm`, etc.) against
+   real salt-pan operations data.
+
+3. **Collect verified field outcomes** — record actual harvest yields, rain
+   damage, and purity for at least one full season to replace proxy labels with
+   field-proven targets.
+
+4. **Retrain in field-data mode** — after collecting verified outcomes, retrain
+   all models. Verify `uses_proxy_labels` transitions to `false`.
+
+5. **Validate SHAP explanations** — confirm that the top SHAP factors align
+   with agronomic domain knowledge for the specific salt-pan region.
+
+6. **Safety review** — before enabling `PHYSICAL_EQUIPMENT_CONTROL`, conduct a
+   formal safety review of the actuator integration.
+
+---
+
+## Screenshots Section
+
+> Screenshots can be added here after running the application. Capture:
+>
+> - Dashboard overview with 3 demo pans
+> - Digital twin detail view
+> - Rain simulation results (20 mm scenario)
+> - Dataset upload + validation report
+> - Model training results with metrics
+> - Recommendation card with SHAP reasons
+> - Farmer accept/reject flow
+> - Feedback comparison view
+> - Proxy warning banner
+> - English / Tamil language toggle
+
+---
+
+## Sample CSV Templates
+
+Template files are in `data/samples/`:
+
+| File | Dataset Type |
+|------|-------------|
+| `data/samples/template_sensor.csv` | Sensor readings |
+| `data/samples/template_weather.csv` | Weather observations |
+| `data/samples/template_operations.csv` | Operations + harvest outcomes |
+| `data/samples/template_combined.csv` | Combined master dataset |
+| `data/samples/template_outcomes.csv` | Field outcomes for feedback |
+
+---
+
+## Recommended Next Steps
+
+1. **Collect real sensor data** — deploy IoT sensors to 2–3 pans and stream
+   readings via `POST /api/sensors/readings`
+2. **Record verified outcomes** — log actual harvest yields and rain damage
+   through the Outcomes tab
+3. **Retrain with field data** — after one season, retrain models and verify
+   the proxy banner disappears
+4. **Calibrate thresholds** — adjust `domain_thresholds.yaml` to match local
+   instrument ranges
+5. **Add authentication** — implement JWT or OAuth2 for multi-user access
+6. **WebSocket updates** — add real-time push for twin state changes
+7. **Mobile responsiveness** — optimize the dashboard for tablet/phone use
+   in the field
+8. **Tamil translation audit** — verify the i18n Tamil strings with native
+   speakers
+9. **Integration testing** — add end-to-end tests with Playwright or Cypress
+10. **Deploy to staging** — set up a cloud deployment with real PostgreSQL and
+    live weather API

@@ -8,7 +8,9 @@ import {
   Badge,
   Button,
   Card,
+  ConfirmDialog,
   EmptyState,
+  ErrorBanner,
   inputCls,
   Spinner,
 } from "@/components/ui";
@@ -76,6 +78,8 @@ export default function DataPanel() {
   const [message, setMessage] = useState<Message>(null);
   const [file, setFile] = useState<File | null>(null);
   const [datasetType, setDatasetType] = useState("");
+  const [confirmImport, setConfirmImport] = useState<number | null>(null);
+  const [confirmPromote, setConfirmPromote] = useState<number | null>(null);
 
   const preview = useQuery({
     queryKey: ["preview", previewFor],
@@ -142,6 +146,31 @@ export default function DataPanel() {
 
   return (
     <div className="space-y-5">
+      {/* Confirmation dialogs */}
+      <ConfirmDialog
+        open={confirmImport !== null}
+        title="Import dataset?"
+        message="This will import all valid rows into the operational tables (sensor readings, weather, operations). This action cannot be undone."
+        confirmLabel="Import"
+        variant="warning"
+        onConfirm={() => {
+          if (confirmImport !== null) importer.mutate(confirmImport);
+          setConfirmImport(null);
+        }}
+        onCancel={() => setConfirmImport(null)}
+      />
+      <ConfirmDialog
+        open={confirmPromote !== null}
+        title="Promote to training source?"
+        message="This will overwrite the current training dataset with this file's contents. Models trained later will use this data."
+        confirmLabel="Promote"
+        variant="warning"
+        onConfirm={() => {
+          if (confirmPromote !== null) promote.mutate(confirmPromote);
+          setConfirmPromote(null);
+        }}
+        onCancel={() => setConfirmPromote(null)}
+      />
       <Card
         title="Upload a salt-pan dataset"
         subtitle="CSV/TSV of sensor, weather, operations or combined daily rows. Analysed before anything is imported."

@@ -390,11 +390,17 @@ export interface Outcome {
   actual_rainfall_mm: number;
   risk_occurred: boolean;
   action_taken: string;
+  pump_duration_min: number | null;
+  transferred_volume_l: number | null;
+  protection_applied: boolean | null;
   harvest_date: string | null;
   harvest_delayed_days: number | null;
   actual_yield_kg: number | null;
+  salt_purity_pct: number | null;
   brine_density_be: number | null;
   salt_thickness_mm: number | null;
+  rain_damage: boolean | null;
+  yield_loss_pct: number | null;
   verified: boolean;
   verified_at: string | null;
   notes: string;
@@ -402,23 +408,65 @@ export interface Outcome {
   created_at: string;
 }
 
+export interface SensorReading {
+  id: number;
+  pan_id: number;
+  timestamp: string;
+  salinity_g_l: number;
+  ec_ms_cm: number;
+  water_depth_cm: number;
+  brine_temperature_c: number;
+  air_temperature_c: number;
+  humidity_pct: number;
+  sensor_quality: number;
+  source: string;
+}
+
+export interface OperationEvent {
+  id: number;
+  pan_id: number;
+  recommendation_id: number | null;
+  event_timestamp: string;
+  event_type: string;
+  source_pan_id: number | null;
+  destination_pan_id: number | null;
+  transferred_volume_l: number | null;
+  pump_duration_min: number | null;
+  drained_volume_l: number | null;
+  protection_applied: boolean;
+  operator_notes: string;
+  source_pan_ref: string | null;
+  destination_pan_ref: string | null;
+  recommendation_title: string | null;
+}
+
 export interface ComparisonRow {
   outcome_id: number;
   pan_id: number;
   pan_ref: string;
   prediction_id: number | null;
+  recommendation_id: number | null;
+  recommended_action: string;
+  action_matched: boolean | null;
+  recommendation_success: boolean | null;
   prediction_type: string;
   prediction_date: string;
   prediction_score: number | null;
   outcome_date: string;
   actual_rainfall_mm: number;
+  forecast_rainfall_mm: number | null;
+  rain_error_mm: number | null;
+  predicted_harvest_date: string | null;
+  harvest_date_error_days: number | null;
   risk_occurred: boolean;
   action_taken: string;
   actual_yield_kg: number | null;
   projected_yield_kg: number | null;
+  yield_error_kg: number | null;
   hit: string;
   error: number | null;
   verified: boolean;
+  feedback_ingested: boolean;
 }
 
 export interface EvaluationSummary {
@@ -432,8 +480,20 @@ export interface EvaluationSummary {
   readiness_mae: number | null;
   yield_mae_kg: number | null;
   harvest_delay_mean_days: number | null;
+  harvest_date_mae_days: number | null;
+  forecast_rainfall_mae_mm: number | null;
   recommendations: Record<string, number>;
   by_prediction_type: Record<string, number>;
+  recommendation_acceptance_rate: number | null;
+  recommendation_completion_rate: number | null;
+  response_time_mean_hours: number | null;
+  response_time_median_hours: number | null;
+  recommendation_success_rate: number | null;
+  linked_outcomes: number;
+  action_match_rate: number | null;
+  feedback_rows_collected: number;
+  ingested_outcomes: number;
+  models_pending_retrain: boolean;
   proxy_labels_in_use?: boolean;
   proxy_note?: string;
 }
@@ -445,6 +505,17 @@ export interface FeedbackResult {
   training_rows_added: number;
   feedback_dataset_id: number | null;
   models_pending_retrain: boolean;
+}
+
+export interface RetrainResult {
+  feedback_rows_used: number;
+  base_dataset_id: number | null;
+  base_rows: number;
+  combined_rows: number;
+  models_trained: number;
+  proxy_labels_in_use: boolean;
+  errors: string[];
+  models: MlModel[];
 }
 
 export interface WeatherForecastOut {

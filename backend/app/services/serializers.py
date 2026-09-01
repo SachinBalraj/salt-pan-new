@@ -367,9 +367,13 @@ def outcome_to_dict(out: HarvestOutcome) -> dict:
         "actual_rainfall_mm": out.actual_rainfall_mm if out.actual_rainfall_mm is not None else 0.0,
         "risk_occurred": bool(out.rain_damage),
         "action_taken": str(details.get("action_taken", "")),
+        "pump_duration_min": details.get("pump_duration_min"),
+        "transferred_volume_l": details.get("transferred_volume_l"),
+        "protection_applied": details.get("protection_applied"),
         "harvest_date": details.get("harvest_date") or harvest_date,
         "harvest_delayed_days": details.get("harvest_delayed_days"),
         "actual_yield_kg": out.actual_yield_kg,
+        "salt_purity_pct": out.salt_purity_pct,
         "brine_density_be": details.get("brine_density_be"),
         "salt_thickness_mm": details.get("salt_thickness_mm"),
         "rain_damage": out.rain_damage,
@@ -379,6 +383,46 @@ def outcome_to_dict(out: HarvestOutcome) -> dict:
         "notes": out.outcome_notes,
         "feedback_ingested": out.feedback_ingested,
         "created_at": out.created_at,
+    }
+
+
+# ------------------------------------------------------------------ Pan telemetry / operations
+def sensor_reading_to_dict(row) -> dict:
+    return {
+        "id": row.id,
+        "pan_id": row.pan_id,
+        "timestamp": row.timestamp,
+        "salinity_g_l": row.salinity_g_l,
+        "ec_ms_cm": row.ec_ms_cm,
+        "water_depth_cm": row.water_depth_cm,
+        "brine_temperature_c": row.brine_temperature_c,
+        "air_temperature_c": row.air_temperature_c,
+        "humidity_pct": row.humidity_pct,
+        "sensor_quality": row.sensor_quality,
+        "source": row.source,
+    }
+
+
+def operation_event_to_dict(row, pan_refs: Optional[Dict[int, str]] = None,
+                            rec_titles: Optional[Dict[int, str]] = None) -> dict:
+    pan_refs = pan_refs or {}
+    rec_titles = rec_titles or {}
+    return {
+        "id": row.id,
+        "pan_id": row.pan_id,
+        "recommendation_id": row.recommendation_id,
+        "event_timestamp": row.event_timestamp,
+        "event_type": row.event_type,
+        "source_pan_id": row.source_pan_id,
+        "destination_pan_id": row.destination_pan_id,
+        "transferred_volume_l": row.transferred_volume_l,
+        "pump_duration_min": row.pump_duration_min,
+        "drained_volume_l": row.drained_volume_l,
+        "protection_applied": bool(row.protection_applied),
+        "operator_notes": row.operator_notes or "",
+        "source_pan_ref": pan_refs.get(row.source_pan_id) if row.source_pan_id else None,
+        "destination_pan_ref": pan_refs.get(row.destination_pan_id) if row.destination_pan_id else None,
+        "recommendation_title": rec_titles.get(row.recommendation_id) if row.recommendation_id else None,
     }
 
 

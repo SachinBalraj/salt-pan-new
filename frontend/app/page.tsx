@@ -1,34 +1,68 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
-import { api, fmt, readinessTone, riskTone } from "@/lib/api";
-import { Badge, Card, Spinner, Stat } from "@/components/ui";
+import { Component, ReactNode, useState } from "react";
+import { api } from "@/lib/api";
+import { Badge } from "@/components/ui";
+import { useLang, LANG_LABEL } from "@/lib/i18n";
 import Dashboard from "@/components/panels/Dashboard";
+import PanDetails from "@/components/panels/PanDetails";
 import DataPanel from "@/components/panels/DataPanel";
 import ModelsPanel from "@/components/panels/ModelsPanel";
-import TwinPanel from "@/components/panels/TwinPanel";
-import WeatherPanel from "@/components/panels/WeatherPanel";
-import PredictPanel from "@/components/panels/PredictPanel";
 import SimulatePanel from "@/components/panels/SimulatePanel";
 import RecommendationsPanel from "@/components/panels/RecommendationsPanel";
 import OutcomesPanel from "@/components/panels/OutcomesPanel";
-import ComparePanel from "@/components/panels/ComparePanel";
+import FeedbackPanel from "@/components/panels/FeedbackPanel";
+import SetupPanel from "@/components/panels/SetupPanel";
 
 const tabs = [
   { key: "dashboard", label: "Dashboard" },
-  { key: "data", label: "Data" },
+  { key: "pans", label: "Pans" },
+  { key: "simulate", label: "Simulator" },
+  { key: "data", label: "Dataset" },
   { key: "models", label: "Models" },
-  { key: "twin", label: "Digital twin" },
-  { key: "weather", label: "Weather" },
-  { key: "predict", label: "Predict" },
-  { key: "simulate", label: "What-if" },
-  { key: "recommend", label: "Advise" },
+  { key: "recommend", label: "Recommendations" },
   { key: "outcomes", label: "Outcomes" },
-  { key: "compare", label: "Compare" },
+  { key: "feedback", label: "Feedback" },
+  { key: "setup", label: "Setup" },
 ] as const;
 
 type TabKey = (typeof tabs)[number]["key"];
+
+// ---------------------------------------------------------------------------
+// React Error Boundary — catches rendering crashes and shows a friendly page
+// ---------------------------------------------------------------------------
+class ErrorBoundary extends Component<
+  { children: ReactNode; fallback?: ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        this.props.fallback ?? (
+          <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4 px-4 text-center">
+            <div className="rounded-xl border border-red-500/40 bg-red-500/10 px-6 py-5">
+              <h2 className="text-lg font-bold text-red-300">
+                Something went wrong
+              </h2>
+              <p className="mt-2 max-w-md text-sm text-slate-400">
+                {this.state.error.message || "An unexpected error occurred while rendering this page."}
+              </p>
+              <p className="mt-2 text-xs text-slate-600">
+                Try refreshing the page, or navigate to a different tab.
+              </p>
+            </div>
+          </div>
+        )
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function ProxyWarningBanner() {
   const { data: status } = useQuery({
@@ -49,12 +83,32 @@ function ProxyWarningBanner() {
   );
 }
 
+function SafetyBanner() {
+  const { data: safety } = useQuery({
+    queryKey: ["safety"],
+    queryFn: () => api.get<{ physical_equipment_control_enabled: boolean; warning: string }>("/api/system/safety"),
+    refetchInterval: 60_000,
+  });
+  if (!safety || !safety.physical_equipment_control_enabled) return null;
+  return (
+    <div className="sticky top-[84px] z-10 border-b border-red-500/60 bg-red-500/20 px-4 py-2 backdrop-blur">
+      <p className="mx-auto max-w-7xl text-center text-xs font-bold tracking-wide text-red-200">
+        ⚠ PHYSICAL EQUIPMENT CONTROL IS ENABLED — THE SYSTEM CAN ACTIVATE PUMPS/GATES
+      </p>
+      <p className="mx-auto max-w-7xl text-center text-[11px] text-red-200/70">
+        {safety.warning}
+      </p>
+    </div>
+  );
+}
+
 function TopBar() {
   const { data: status, isLoading } = useQuery({
     queryKey: ["status"],
     queryFn: api.status,
     refetchInterval: 30_000,
   });
+  const { lang, setLang } = useLang();
   return (
     <header className="sticky top-0 z-20 border-b border-white/10 bg-[#0b1521]/85 backdrop-blur">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-3">
@@ -68,6 +122,22 @@ function TopBar() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
+          <div className="flex items-center rounded-full border border-white/10 bg-white/5 p-0.5">
+            {(["en", "ta"] as const).map((l) => (
+              <button
+                key={l}
+                onClick={() => setLang(l)}
+                className={`rounded-full px-2.5 py-0.5 font-medium transition ${
+                  lang === l
+                    ? "bg-brine-500/20 text-brine-300"
+                    : "text-slate-500 hover:text-slate-300"
+                }`}
+                title={l === "ta" ? "Translate farmer instructions to Tamil (தமிழ்)" : "English"}
+              >
+                {LANG_LABEL[l]}
+              </button>
+            ))}
+          </div>
           {isLoading ? (
             <Badge className="border-white/10 bg-white/5 text-slate-400">checking…</Badge>
           ) : (
@@ -89,48 +159,22 @@ function TopBar() {
   );
 }
 
-function KpiStrip() {
-  const { data: pans, isLoading } = useQuery({ queryKey: ["pans"], queryFn: api.pans });
-  const twins = useQuery({
-    queryKey: ["twins-all"],
-    queryFn: async () => {
-      const list = pans ?? [];
-      return Promise.all(list.map((p) => api.panTwin(p.id)));
-    },
-    enabled: !isLoading && !!pans && pans.length > 0,
-  });
-  if (isLoading) {
-    return <div className="grid grid-cols-2 gap-3 md:grid-cols-4"><Spinner label="Loading…" /></div>;
-  }
-  const list = pans ?? [];
-  const progress = (twins.data ?? [])
-    .map((t) => t.progress_to_harvest)
-    .concat(Array(Math.max(0, list.length - (twins.data?.length ?? 0))).fill(0));
-  const avgReadiness = progress.length
-    ? progress.reduce((a, v) => a + v, 0) / progress.length
-    : 0;
-  const harvestReady = progress.filter((v) => v >= 0.55).length;
-  const atRisk = (twins.data ?? []).filter((t) => (t.state.risk as number) >= 0.65).length;
-  return (
-    <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-      <Stat label="Pans tracked" value={String(list.length)} tone="text-slate-100" sub="digital twin instances" />
-      <Stat label="Avg readiness" value={fmt.pct(avgReadiness)} tone={readinessTone(avgReadiness).text} sub="harvest progress" />
-      <Stat label="Harvest-ready" value={String(harvestReady)} tone="text-emerald-400" sub="readiness ≥ 55%" />
-      <Stat label="Risk-prone" value={String(atRisk)} tone={riskTone(0.65).text} sub="climate risk ≥ 65%" />
-    </div>
-  );
-}
-
 export default function Home() {
   const [tab, setTab] = useState<TabKey>("dashboard");
+  const [panFocus, setPanFocus] = useState<number>(0);
+
+  const openPan = (id: number) => {
+    setPanFocus(id);
+    setTab("pans");
+  };
 
   return (
     <div className="min-h-screen">
       <TopBar />
       <ProxyWarningBanner />
+      <SafetyBanner />
       <main className="mx-auto max-w-7xl px-4 pb-24 pt-4">
-        <KpiStrip />
-        <nav className="mt-6 flex flex-wrap gap-1.5 border-b border-white/10 pb-3">
+        <nav className="mt-2 flex flex-wrap gap-1.5 border-b border-white/10 pb-3">
           {tabs.map((t) => (
             <button
               key={t.key}
@@ -146,16 +190,17 @@ export default function Home() {
           ))}
         </nav>
         <section className="mt-5">
-          {tab === "dashboard" && <Dashboard />}
-          {tab === "data" && <DataPanel />}
-          {tab === "models" && <ModelsPanel />}
-          {tab === "twin" && <TwinPanel />}
-          {tab === "weather" && <WeatherPanel />}
-          {tab === "predict" && <PredictPanel />}
-          {tab === "simulate" && <SimulatePanel />}
-          {tab === "recommend" && <RecommendationsPanel />}
-          {tab === "outcomes" && <OutcomesPanel />}
-          {tab === "compare" && <ComparePanel />}
+          <ErrorBoundary key={tab}>
+            {tab === "dashboard" && <Dashboard onOpenPan={openPan} />}
+            {tab === "pans" && <PanDetails key={panFocus} focusId={panFocus} />}
+            {tab === "simulate" && <SimulatePanel />}
+            {tab === "data" && <DataPanel />}
+            {tab === "models" && <ModelsPanel />}
+            {tab === "recommend" && <RecommendationsPanel />}
+            {tab === "outcomes" && <OutcomesPanel />}
+            {tab === "feedback" && <FeedbackPanel />}
+            {tab === "setup" && <SetupPanel onFinish={() => setTab("dashboard")} />}
+          </ErrorBoundary>
         </section>
       </main>
     </div>

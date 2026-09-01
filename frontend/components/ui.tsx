@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import { ReactNode, useEffect, useState } from "react";
 
 export function Card({
   title,
@@ -122,9 +122,22 @@ export function Spinner({ label }: { label?: string }) {
   );
 }
 
-export function EmptyState({ children }: { children: ReactNode }) {
+export function EmptyState({
+  children,
+  icon,
+}: {
+  children: ReactNode;
+  icon?: ReactNode;
+}) {
   return (
     <div className="rounded-xl border border-dashed border-white/10 py-10 text-center text-sm text-slate-500">
+      <div className="mx-auto mb-2 flex h-8 w-8 items-center justify-center rounded-full bg-white/5 text-slate-600">
+        {icon ?? (
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+          </svg>
+        )}
+      </div>
       {children}
     </div>
   );
@@ -195,6 +208,101 @@ export function Meter({
           className={`h-full rounded-full transition-all ${tone ?? "bg-sky-500"}`}
           style={{ width: `${pct}%` }}
         />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ConfirmDialog — modal confirmation for dangerous / irreversible actions
+// ---------------------------------------------------------------------------
+export function ConfirmDialog({
+  open,
+  title,
+  message,
+  confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
+  variant = "danger",
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  variant?: "danger" | "warning";
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    if (open) setVisible(true);
+    else {
+      const t = setTimeout(() => setVisible(false), 150);
+      return () => clearTimeout(t);
+    }
+  }, [open]);
+
+  if (!visible) return null;
+
+  const accent =
+    variant === "danger"
+      ? "bg-red-500 text-white hover:bg-red-400"
+      : "bg-amber-500 text-amber-950 hover:bg-amber-400";
+
+  return (
+    <div
+      className={`fixed inset-0 z-50 flex items-center justify-center bg-black/60 transition-opacity ${open ? "opacity-100" : "opacity-0"}`}
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-md rounded-xl border border-white/10 bg-[#0b1521] p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-base font-bold text-slate-100">{title}</h3>
+        <p className="mt-2 text-sm text-slate-400">{message}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="ghost" onClick={onCancel}>
+            {cancelLabel}
+          </Button>
+          <button
+            onClick={() => {
+              onConfirm();
+              onCancel();
+            }}
+            className={`rounded-lg px-4 py-2 text-sm font-medium transition ${accent}`}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ErrorBanner — friendly error display with dismiss
+// ---------------------------------------------------------------------------
+export function ErrorBanner({
+  message,
+  onDismiss,
+}: {
+  message: string;
+  onDismiss?: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <span className="font-semibold">Something went wrong.</span>{" "}
+          {message}
+        </div>
+        {onDismiss && (
+          <button onClick={onDismiss} className="shrink-0 text-red-400 hover:text-red-200">
+            ✕
+          </button>
+        )}
       </div>
     </div>
   );

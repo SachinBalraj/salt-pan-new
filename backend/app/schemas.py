@@ -402,10 +402,16 @@ class OutcomeCreate(BaseModel):
     actual_rainfall_mm: float = 0.0
     risk_occurred: Optional[bool] = None
     action_taken: str = ""
+    pump_duration_min: Optional[float] = None
+    transferred_volume_l: Optional[float] = None
+    protection_applied: Optional[bool] = None
     harvest_date: Optional[str] = None
     actual_yield_kg: Optional[float] = None
+    salt_purity_pct: Optional[float] = None
     brine_density_be: Optional[float] = None
     salt_thickness_mm: Optional[float] = None
+    rain_damage: Optional[bool] = None
+    yield_loss_pct: Optional[float] = None
     notes: str = ""
 
 
@@ -418,16 +424,55 @@ class OutcomeOut(ORMModel):
     actual_rainfall_mm: float
     risk_occurred: bool
     action_taken: str
+    pump_duration_min: Optional[float]
+    transferred_volume_l: Optional[float]
+    protection_applied: Optional[bool]
     harvest_date: Optional[str]
     harvest_delayed_days: Optional[int]
     actual_yield_kg: Optional[float]
+    salt_purity_pct: Optional[float]
     brine_density_be: Optional[float]
     salt_thickness_mm: Optional[float]
+    rain_damage: Optional[bool]
+    yield_loss_pct: Optional[float]
     verified: bool
     verified_at: Optional[datetime]
     notes: str
     feedback_ingested: bool
     created_at: datetime
+
+
+# ------------------------------------------------------------------ Pan telemetry / operations
+class SensorReadingOut(ORMModel):
+    id: int
+    pan_id: int
+    timestamp: datetime
+    salinity_g_l: float
+    ec_ms_cm: float
+    water_depth_cm: float
+    brine_temperature_c: float
+    air_temperature_c: float
+    humidity_pct: float
+    sensor_quality: float
+    source: str
+
+
+class OperationEventOut(ORMModel):
+    id: int
+    pan_id: int
+    recommendation_id: Optional[int]
+    event_timestamp: datetime
+    event_type: str
+    source_pan_id: Optional[int]
+    destination_pan_id: Optional[int]
+    transferred_volume_l: Optional[float]
+    pump_duration_min: Optional[float]
+    drained_volume_l: Optional[float]
+    protection_applied: bool
+    operator_notes: str
+    source_pan_ref: Optional[str] = None
+    destination_pan_ref: Optional[str] = None
+    recommendation_title: Optional[str] = None
 
 
 # ------------------------------------------------------------------ Evaluation
@@ -436,18 +481,28 @@ class ComparisonRow(BaseModel):
     pan_id: int
     pan_ref: str
     prediction_id: Optional[int]
+    recommendation_id: Optional[int] = None
+    recommended_action: str = ""
+    action_matched: Optional[bool] = None
+    recommendation_success: Optional[bool] = None
     prediction_type: str
     prediction_date: str
-    prediction_score: float
+    prediction_score: Optional[float] = None
     outcome_date: str
     actual_rainfall_mm: float
+    forecast_rainfall_mm: Optional[float] = None
+    rain_error_mm: Optional[float] = None
+    predicted_harvest_date: Optional[str] = None
+    harvest_date_error_days: Optional[int] = None
     risk_occurred: bool
     action_taken: str
     actual_yield_kg: Optional[float]
     projected_yield_kg: Optional[float]
+    yield_error_kg: Optional[float] = None
     hit: str
     error: Optional[float]
     verified: bool
+    feedback_ingested: bool = False
 
 
 class EvaluationSummary(BaseModel):
@@ -461,8 +516,20 @@ class EvaluationSummary(BaseModel):
     readiness_mae: Optional[float]
     yield_mae_kg: Optional[float]
     harvest_delay_mean_days: Optional[float]
+    harvest_date_mae_days: Optional[float] = None
+    forecast_rainfall_mae_mm: Optional[float] = None
     recommendations: Dict[str, int]
     by_prediction_type: Dict[str, int]
+    recommendation_acceptance_rate: Optional[float] = None
+    recommendation_completion_rate: Optional[float] = None
+    response_time_mean_hours: Optional[float] = None
+    response_time_median_hours: Optional[float] = None
+    recommendation_success_rate: Optional[float] = None
+    linked_outcomes: int = 0
+    action_match_rate: Optional[float] = None
+    feedback_rows_collected: int = 0
+    ingested_outcomes: int = 0
+    models_pending_retrain: bool = False
     proxy_labels_in_use: bool = False
     proxy_note: str = ""
 
@@ -474,3 +541,14 @@ class FeedbackResult(BaseModel):
     training_rows_added: int
     feedback_dataset_id: Optional[int]
     models_pending_retrain: bool
+
+
+class RetrainResult(BaseModel):
+    feedback_rows_used: int
+    base_dataset_id: Optional[int]
+    base_rows: int
+    combined_rows: int
+    models_trained: int
+    proxy_labels_in_use: bool
+    errors: List[str] = []
+    models: List[ModelOut] = []

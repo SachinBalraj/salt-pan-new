@@ -87,13 +87,17 @@ def activate_model(model_id: int, db: Session = Depends(get_db)):
     if m.version == 0:
         raise HTTPException(400,
                             "Cannot activate a deferred model (no trained artefact).")
-    db.query(ModelVersion).filter(
-        ModelVersion.model_type == m.model_type,
-        ModelVersion.id != m.id,
-    ).update({ModelVersion.active: False})
-    m.active = True
-    db.commit()
-    db.refresh(m)
+    try:
+        db.query(ModelVersion).filter(
+            ModelVersion.model_type == m.model_type,
+            ModelVersion.id != m.id,
+        ).update({ModelVersion.active: False})
+        m.active = True
+        db.commit()
+        db.refresh(m)
+    except Exception:
+        db.rollback()
+        raise HTTPException(500, "Failed to activate model — changes rolled back.")
     return model_to_dict(m, db)
 
 
@@ -136,38 +140,44 @@ def train(body: TrainRequest, db: Session = Depends(get_db)):
         raise HTTPException(400, f"Label preparation failed: {exc}") from exc
 
     created: List[ModelVersion] = []
-    for kind in kinds:
-        try:
-            trained = train_model(kind, df, ds.id, settings.models_path,
-                                  labels_report=label_report,
-                                  target_report=target_report,
-                                  dataset_name=ds.name)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        split = trained.get("split") or {}
-        trs, tre = split.get("train_dates") or [None, None]
-        mv = ModelVersion(
-            model_name=trained["model_name"],
-            model_type=kind,
-            algorithm=trained.get("algorithm", ""),
-            target_column=trained.get("target", ""),
-            version=trained["version"],
-            model_path=trained["artifact_path"],
-            training_rows=int(trained["rows_trained"]),
-            test_rows=int(trained.get("test_rows", 0)),
-            training_start_date=trs,
-            training_end_date=tre,
-            split_json=split,
-            metrics_json=trained["metrics"],
-            feature_names_json=trained["feature_names"],
-            uses_proxy_labels=bool(trained["uses_proxy_labels"]),
-            training_errors_json=trained.get("training_errors", []),
-            dataset_id=ds.id,
-            active=bool(trained["version"] and trained["status"] == "trained"),
-        )
-        db.add(mv)
-        created.append(mv)
-    db.commit()
-    for m in created:
-        db.refresh(m)
+    try:
+        for kind in kinds:
+            try:
+                trained = train_model(kind, df, ds.id, settings.models_path,
+                                      labels_report=label_report,
+                                      target_report=target_report,
+                                      dataset_name=ds.name)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            split = trained.get("split") or {}
+            trs, tre = split.get("train_dates") or [None, None]
+            mv = ModelVersion(
+                model_name=trained["model_name"],
+                model_type=kind,
+                algorithm=trained.get("algorithm", ""),
+                target_column=trained.get("target", ""),
+                version=trained["version"],
+                model_path=trained["artifact_path"],
+                training_rows=int(trained["rows_trained"]),
+                test_rows=int(trained.get("test_rows", 0)),
+                training_start_date=trs,
+                training_end_date=tre,
+                split_json=split,
+                metrics_json=trained["metrics"],
+                feature_names_json=trained["feature_names"],
+                uses_proxy_labels=bool(trained["uses_proxy_labels"]),
+                training_errors_json=trained.get("training_errors", []),
+                dataset_id=ds.id,
+                active=bool(trained["version"] and trained["status"] == "trained"),
+            )
+            db.add(mv)
+            created.append(mv)
+        db.commit()
+        for m in created:
+            db.refresh(m)
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise HTTPException(500, "Training failed — all changes rolled back.")
     return [model_to_dict(m, db) for m in created]

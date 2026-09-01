@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { LanguageProvider } from "@/lib/i18n";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   // Keep it simple: a single module-scoped client to avoid re-renders.
@@ -15,5 +16,9 @@ export default function Providers({ children }: { children: React.ReactNode }) {
     },
   }));
 
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={client}>
+      <LanguageProvider>{children}</LanguageProvider>
+    </QueryClientProvider>
+  );
 }

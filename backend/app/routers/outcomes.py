@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import HarvestOutcome, Pan, Prediction
+from app.models import HarvestOutcome, OperationEvent, Pan, Prediction, Recommendation
 from app.schemas import OutcomeCreate, OutcomeOut
 from app.services.serializers import outcome_to_dict
 
@@ -50,8 +50,12 @@ def create_outcome(body: OutcomeCreate, db: Session = Depends(get_db)):
         "harvest_delayed_days": delayed_days,
         "brine_density_be": body.brine_density_be,
         "salt_thickness_mm": body.salt_thickness_mm,
+        "pump_duration_min": body.pump_duration_min,
+        "transferred_volume_l": body.transferred_volume_l,
+        "protection_applied": body.protection_applied,
     }
     actual_rain = body.actual_rainfall_mm or 0.0
+    rain_damage = body.rain_damage if body.rain_damage is not None else risk
 
     out = HarvestOutcome(
         pan_id=body.pan_id,
@@ -59,14 +63,70 @@ def create_outcome(body: OutcomeCreate, db: Session = Depends(get_db)):
         recommendation_id=body.recommendation_id,
         harvest_date=harvest_date,
         actual_yield_kg=body.actual_yield_kg,
-        salt_purity_pct=None,
+        salt_purity_pct=body.salt_purity_pct,
         actual_rainfall_mm=actual_rain,
-        rain_damage=risk,
-        yield_loss_pct=None,
+        rain_damage=rain_damage,
+        yield_loss_pct=body.yield_loss_pct,
         outcome_notes=body.notes,
         details_json=details,
     )
     db.add(out)
+    db.flush()
+
+    if body.recommendation_id:
+        rec = db.get(Recommendation, body.recommendation_id)
+        if rec is not None and rec.status != "completed":
+            rec.status = "completed"
+            rec.operator_response_at = dt.datetime.utcnow()
+
+    if body.pump_duration_min and body.pump_duration_min > 0:
+        db.add(OperationEvent(
+            pan_id=body.pan_id,
+            recommendation_id=body.recommendation_id,
+            event_timestamp=dt.datetime.utcnow(),
+            event_type="pumping",
+            pump_duration_min=float(body.pump_duration_min),
+            operator_notes="recorded with outcome",
+        ))
+    if body.transferred_volume_l and body.transferred_volume_l > 0:
+        db.add(OperationEvent(
+            pan_id=body.pan_id,
+            recommendation_id=body.recommendation_id,
+            event_timestamp=dt.datetime.utcnow(),
+            event_type="brine_transfer",
+            transferred_volume_l=float(body.transferred_volume_l),
+            operator_notes="recorded with outcome",
+        ))
+    if body.protection_applied:
+        db.add(OperationEvent(
+            pan_id=body.pan_id,
+            recommendation_id=body.recommendation_id,
+            event_timestamp=dt.datetime.utcnow(),
+            event_type="protection",
+            protection_applied=True,
+            operator_notes="protection applied during outcome window",
+        ))
+
+    # Phase 13: reflect verified field facts back into the digital twin as soon
+    # as an outcome is recorded (never blocks outcome saving).
+    try:
+        from app.services.digital_twin import (
+            apply_outcome_to_twin,
+            get_twin_state,
+            record_state,
+        )
+        twin_after = apply_outcome_to_twin(get_twin_state(db, pan), {
+            "outcome_date": outcome_date,
+            "actual_rainfall_mm": actual_rain,
+            "action_taken": body.action_taken,
+            "harvest_date": harvest_date,
+            "brine_density_be": body.brine_density_be,
+            "salt_thickness_mm": body.salt_thickness_mm,
+        })
+        record_state(db, pan, twin_after, source="outcome_record")
+    except Exception:  # pragma: no cover - defensive
+        pass
+
     db.commit()
     db.refresh(out)
     return outcome_to_dict(out)

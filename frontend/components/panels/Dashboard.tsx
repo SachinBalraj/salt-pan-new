@@ -1,239 +1,228 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { api, fmt, readinessTone, riskTone, severityColor } from "@/lib/api";
+import { api, fmt, readinessTone, riskTone, recStatusTone } from "@/lib/api";
 import { Badge, Card, Meter, Spinner, Stat } from "@/components/ui";
 import { PanSelect } from "./common";
-import { useState } from "react";
+import { useLang, t } from "@/lib/i18n";
+import type { DigitalTwinOut, Recommendation } from "@/lib/types";
 
-export default function Dashboard() {
+const ACTION_TONE: Record<string, string> = {
+  harvest_now: "border-red-500/40 bg-red-500/15 text-red-300",
+  protect_pan: "border-red-500/40 bg-red-500/15 text-red-300",
+  store_brine: "border-red-500/40 bg-red-500/15 text-red-300",
+  harvest_soon: "border-amber-500/40 bg-amber-500/15 text-amber-300",
+  pump_excess: "border-amber-500/40 bg-amber-500/15 text-amber-300",
+  continue_evaporation: "border-emerald-500/40 bg-emerald-500/15 text-emerald-300",
+  monitor: "border-emerald-500/40 bg-emerald-500/15 text-emerald-300",
+};
+
+function actionBadge(action: string) {
+  return (
+    `border px-2.5 py-1 text-sm font-bold ` +
+    (ACTION_TONE[action] ?? "border-sky-500/40 bg-sky-500/15 text-sky-300")
+  );
+}
+
+function ActionCard({ rec, twin }: { rec?: Recommendation; twin?: DigitalTwinOut }) {
+  const { lang } = useLang();
+  if (!rec || !twin) {
+    return (
+      <p className="text-sm text-slate-500">
+        No active recommendation for this pan. Open the Recommendations page and
+        press <b>Generate</b>.
+      </p>
+    );
+  }
+  const action = rec.recommendation_type;
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge className={actionBadge(action)}>
+          {t(rec.title, lang)}
+        </Badge>
+        <Badge className={recStatusTone(rec.status)}>{t(rec.status, lang)}</Badge>
+        {rec.action_deadline && (
+          <span className="text-xs text-slate-500">
+            act by {fmt.date(rec.action_deadline)}
+          </span>
+        )}
+      </div>
+      <p className="text-sm leading-relaxed text-slate-300">{t(rec.message, lang)}</p>
+      <div className="rounded-lg border border-white/5 bg-black/30 px-3 py-2 text-xs text-slate-400">
+        <b className="text-slate-300">Why: </b>
+        {t(rec.reasons?.filter(Boolean)[0], lang)}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+        <span>Confidence {Math.round(rec.confidence_pct)}%</span>
+        <span>•</span>
+        <span>
+          {t("Last update", lang)}: {fmt.date(twin.last_update)}{" "}
+          {twin.last_update?.includes("T") ? new Date(twin.last_update).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : ""}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+export default function Dashboard({ onOpenPan }: { onOpenPan?: (id: number) => void }) {
+  const { lang } = useLang();
   const status = useQuery({ queryKey: ["status"], queryFn: api.status });
   const { data: pans, isLoading: pansLoading } = useQuery({
     queryKey: ["pans"],
     queryFn: api.pans,
   });
-  const summary = useQuery({
-    queryKey: ["eval-summary"],
-    queryFn: api.evaluationSummary,
-  });
 
-  const [panId, setPanId] = useState<number>(0);
-  const selected = pans?.find((p) => p.id === panId || panId === 0) ?? pans?.[0];
-  const twin = useQuery({
-    queryKey: ["twin", selected?.id],
-    queryFn: () => api.panTwin(selected!.id),
-    enabled: !!selected?.id,
+  const twins = useQuery({
+    queryKey: ["dts-all"],
+    queryFn: async () => {
+      const list = await api.pans();
+      return Promise.all(list.map((p) => api.digitalTwin(p.id)));
+    },
+    enabled: !pansLoading,
   });
 
   const recs = useQuery({
-    queryKey: ["recs", selected?.id],
-    queryFn: () => api.recommendations(selected?.id),
-    enabled: !!selected?.id,
+    queryKey: ["recs-all-active"],
+    queryFn: () => api.recommendations(undefined, "pending"),
   });
 
-  const s = status.data;
-  if (status.isLoading) return <Spinner label="Loading system status…" />;
+  if (pansLoading || status.isLoading) return <Spinner label="Loading dashboard…" />;
+  const list = pans ?? [];
+  const dts = twins.data ?? [];
+  const pending = recs.data ?? [];
 
-  const readiness = twin.data?.progress_to_harvest ?? 0;
-  const risk = twin.data?.state?.risk ?? 0;
+  const byPan = (panId: number) => dts.find((d) => d.pan_id === panId);
+
+  const highRisk = dts.filter((d) => d.climate_risk >= 0.65).length;
+  const harvestReady = dts.filter((d) => d.harvest_readiness >= 0.55).length;
+
+  const selected = list[0];
+  const twin = byPan(selected?.id ?? -1);
+  const pr = twin?.rain_probability_pct ?? 0;
+  const rainNow = pr >= 70 ? "text-red-400" : pr >= 40 ? "text-amber-300" : "text-emerald-400";
+  const latestPending = pending.find((r) => r.pan_id === selected?.id) ?? pending[0];
+  const rain7 = dts.length ? dts.reduce((a, d) => a + (d.forecast_rainfall_7d_mm ?? 0), 0) / dts.length : 0;
+  const maxDepth = Math.max(0, ...dts.map((d) => d.water_depth_cm ?? 0));
+  const maxSal = Math.max(0, ...dts.map((d) => d.salinity_g_l ?? 0));
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-lg font-bold text-slate-100">Operations overview</h2>
+          <h2 className="text-lg font-bold text-slate-100">Farmer dashboard</h2>
           <p className="text-sm text-slate-400">
-            AI Digital Twin • climate-resilient salt pan management
+            Live digital twins across all salt pans · refreshed from forecasts, sensors and outcomes
           </p>
         </div>
-        <Badge className={s?.seeded ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300" : "border-amber-500/40 bg-amber-500/15 text-amber-300"}>
-          {s?.seeded ? "Demo seeded & models trained" : "Not seeded"}
+        <Badge
+          className={
+            status.data?.seeded
+              ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+              : "border-amber-500/40 bg-amber-500/15 text-amber-300"
+          }
+        >
+          {status.data?.seeded ? "System ready" : "Setup required"}
         </Badge>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6">
-        <Stat label="Salt pans" value={s?.pans ?? 0} tone="text-brine-300" />
-        <Stat label="ML models" value={s?.models ?? 0} tone="text-brine-300" />
-        <Stat
-          label="Datasets"
-          value={s?.datasets ?? 0}
-          tone="text-slate-100"
-        />
-        <Stat
-          label="Predictions"
-          value={s?.predictions ?? 0}
-          tone="text-slate-100"
-        />
-        <Stat
-          label="Recommendations"
-          value={s?.recommendations ?? 0}
-          tone="text-slate-100"
-        />
-        <Stat label="Outcomes" value={s?.outcomes ?? 0} tone="text-slate-100" />
+      {/* Fleet KPI strip */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Stat label="Total pans" value={String(list.length)} tone="text-slate-100" sub="digital twin instances" />
+        <Stat label="High-risk pans" value={String(highRisk)} tone={highRisk ? "text-red-400" : "text-emerald-400"} sub="climate risk ≥ 65%" />
+        <Stat label="Harvest-ready" value={String(harvestReady)} tone="text-emerald-400" sub="readiness ≥ 55%" />
+        <Stat label="Active alerts" value={String(pending.length)} tone={pending.length ? "text-amber-300" : "text-emerald-400"} sub="recommendations awaiting action" />
       </div>
 
+      {/* Live conditions of the lead pan */}
+      <Card
+        title="Current field conditions"
+        subtitle={selected ? `${selected.pan_id} · ${selected.name} · ${selected.location}` : "No pans yet"}
+        right={
+          <div className="w-56">
+            <PanSelect value={selected?.id ?? 0} onChange={() => {}} allowAll allValue={list[0]?.id ?? 0} />
+          </div>
+        }
+      >
+        {dts.length === 0 ? (
+          <p className="text-sm text-slate-500">
+            No digital twins yet. Create a pan in the Setup wizard to begin.
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Stat label="Current salinity" value={twin ? `${fmt.kg(Math.round(twin.salinity_g_l))} g/L` : "—"} tone={readinessTone(twin?.harvest_readiness ?? 0).text} sub="sea of brine concentration" />
+            <Stat label="Water depth" value={twin ? fmt.cm(twin.water_depth_cm) : "—"} tone={twin && twin.water_depth_cm > (twin as any).state?.safe_depth_cm ? "text-red-400" : "text-slate-100"} sub="over the salt bed" />
+            <Stat label="Rain probability" value={twin ? fmt.pct(pr / 100) : "—"} tone={rainNow} sub="next 24 h" />
+            <Stat label="Forecast rainfall" value={twin ? `${fmt.mm(twin.forecast_rainfall_7d_mm)} (7d)` : "—"} tone={twin && twin.forecast_rainfall_7d_mm >= 10 ? "text-red-400" : "text-sky-300"} sub={`fleet avg ${fmt.mm(rain7)}`} />
+          </div>
+        )}
+      </Card>
+
+      {/* Recommended action */}
       <div className="grid gap-5 lg:grid-cols-2">
         <Card
-          title="Live digital twin"
-          subtitle="Choose a pan to inspect its state and forecast edge"
+          title={t("Recommended action", lang)}
+          subtitle={`Highest-priority advice for ${selected?.pan_id ?? "the fleet"}`}
           right={
-            <div className="w-56">
-              <PanSelect value={selected?.id ?? 0} onChange={setPanId} />
-            </div>
+            selected ? (
+              <button
+                className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:bg-white/5"
+                onClick={() => onOpenPan?.(selected.id)}
+              >
+                Open pan details →
+              </button>
+            ) : undefined
           }
         >
-          {twin.isLoading || !twin.data ? (
-            <Spinner label="Loading twin…" />
-          ) : (
-            <div>
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-xl font-bold text-slate-100">
-                    {twin.data.pan.pan_id}
-                  </div>
-                  <div className="text-xs text-slate-500">
-                    {twin.data.pan.name} · {twin.data.pan.location}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-2xl font-black text-brine-300">
-                    {Math.round(readiness * 100)}%
-                  </div>
-                  <div className="text-[11px] uppercase tracking-wider text-slate-500">
-                    harvest progress
-                  </div>
-                </div>
-              </div>
-              <div className="mt-3">
-                <Meter
-                  value={readiness}
-                  label="Progress to harvest"
-                  tone="bg-brine-400"
-                />
-              </div>
-              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <Stat label="Brine" value={fmt.be(twin.data.state.brine_density_be ?? 0)} tone="text-sky-300" />
-                <Stat label="Salt layer" value={`${fmt.mm(twin.data.state.salt_thickness_mm ?? 0)}`} tone="text-slate-100" />
-                <Stat label="Water depth" value={fmt.cm(twin.data.state.water_depth_cm ?? 0)} tone="text-slate-100" />
-                <Stat label="Est. mass" value={`${fmt.kg(twin.data.state.estimated_salt_mass_kg)} kg`} tone="text-brine-300" />
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400">
-                <span>
-                  Days since rain:{" "}
-                  <b className="text-slate-200">
-                    {twin.data.state.days_since_last_rain}
-                  </b>
-                </span>
-                <span>•</span>
-                <span>
-                  Last rain:{" "}
-                  <b className="text-slate-200">
-                    {fmt.date(twin.data.state.last_rain_date)}
-                  </b>
-                </span>
-                <span>•</span>
-                <span>
-                  Twin refresh:{" "}
-                  <b className="text-slate-200">
-                    {fmt.date(twin.data.state.last_update)}
-                  </b>
-                </span>
-              </div>
-            </div>
-          )}
+          <ActionCard rec={latestPending} twin={twin} />
         </Card>
 
-        <Card
-          title="Latest advice"
-          subtitle="Recommendations generated for the selected pan"
-          right={
-            <div className="flex gap-2">
-              <Badge className={severityColor("low")}>
-                {(recs.data ?? []).filter((r) => r.status === "pending").length}{" "}
-                pending
-              </Badge>
-              <Badge className="border-white/10 bg-white/5 text-slate-300">
-                {(recs.data ?? []).filter((r) => r.status === "accepted").length} accepted
-              </Badge>
-            </div>
-          }
-        >
-          {recs.isLoading ? (
-            <Spinner label="Loading recommendations…" />
-          ) : (recs.data ?? []).length === 0 ? (
-            <p className="text-sm text-slate-500">
-              No recommendations yet. Go to the Recommendations tab and press{" "}
-              <b>Generate</b>.
-            </p>
+        <Card title="Pan status board" subtitle="Tap a pan to open its full details">
+          {list.length === 0 ? (
+            <p className="text-sm text-slate-500">No pans registered.</p>
           ) : (
             <ul className="space-y-2.5">
-              {(recs.data ?? []).slice(0, 3).map((r) => (
-                <li
-                  key={r.id}
-                  className="rounded-lg border border-white/5 bg-black/20 p-3"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-sm font-semibold text-slate-200">
-                      {r.title}
-                    </div>
-                    <Badge className={severityColor(r.risk_level)}>
-                      {r.risk_level}
-                    </Badge>
-                  </div>
-                  <div className="mt-1 line-clamp-2 text-xs text-slate-400">
-                    {r.message}
-                  </div>
-                </li>
-              ))}
+              {list.map((p) => {
+                const d = byPan(p.id);
+                const r = d?.harvest_readiness ?? 0;
+                const risk = d?.climate_risk ?? 0;
+                const rt = readinessTone(r);
+                const rk = riskTone(risk);
+                return (
+                  <li key={p.id}>
+                    <button
+                      className="w-full rounded-lg border border-white/5 bg-black/20 p-3 text-left transition hover:border-brine-500/30"
+                      onClick={() => onOpenPan?.(p.id)}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-semibold text-slate-200">
+                          {p.pan_id} <span className="font-normal text-slate-500">· {p.name}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px]">
+                          <span className={`rounded-md px-1.5 py-0.5 font-semibold ${rk.text}`}>
+                            risk {fmt.pct(risk)}
+                          </span>
+                          <span className={`rounded-md px-1.5 py-0.5 font-semibold ${rt.text}`}>
+                            ready {fmt.pct(r)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="mt-2"><Meter value={r} tone={rt.bar} /></div>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </Card>
       </div>
 
-      <div>
-        <Card
-          title="Model performance"
-          subtitle="Validation metrics of the trained machine-learning models (legacy scorers, Phase-6 classifiers & regressor)"
-        >
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            {Object.entries(s?.model_kinds ?? {}).map(([kind, m]) => (
-              <div
-                key={kind}
-                className="rounded-lg border border-white/5 bg-black/20 p-3"
-              >
-                <div className="text-[11px] uppercase tracking-wider text-slate-500">
-                  {kind.replaceAll("_", " ")}
-                </div>
-                {!m.available ? (
-                  <div className="mt-1 text-sm text-amber-400">Not trained</div>
-                ) : m.version === 0 ? (
-                  <div className="mt-1 text-sm text-red-400">Deferred — insufficient outcome data</div>
-                ) : (
-                  <>
-                    {m.algorithm?.startsWith("RandomForestClassifier") ? (
-                      <div className="mt-1 text-lg font-bold text-emerald-400">
-                        Acc {m.metrics.accuracy?.toFixed(3) ?? "—"}
-                      </div>
-                    ) : (
-                      <div className="mt-1 text-lg font-bold text-emerald-400">
-                        R² {m.metrics.r2?.toFixed(3) ?? "—"}
-                      </div>
-                    )}
-                    <div className="text-[11px] text-slate-500">
-                      {m.metrics.mae !== undefined && <>MAE {m.metrics.mae.toFixed(3)} · </>}
-                      {m.metrics.rmse !== undefined && <>RMSE {m.metrics.rmse.toFixed(3)} · </>}
-                      {m.metrics.accuracy !== undefined && <>Acc {m.metrics.accuracy.toFixed(3)} · </>}
-                      {m.metrics.f1 !== undefined && <>F1 {m.metrics.f1.toFixed(3)}</>}
-                    </div>
-                    <div className="mt-1 text-[10px] text-slate-600">
-                      v{m.version} · {m.rows_trained} rows{m.active ? " · active" : ""}
-                    </div>
-                  </>
-                )}
-              </div>
-            ))}
-          </div>
-        </Card>
+      {/* Fleet extremes */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Stat label="Peak salinity" value={maxSal ? `${fmt.kg(Math.round(maxSal))} g/L` : "—"} tone="text-brine-300" sub="across the fleet" />
+        <Stat label="Peak depth" value={maxDepth ? fmt.cm(maxDepth) : "—"} tone={maxDepth >= 15 ? "text-red-400" : "text-sky-300"} sub="deepest brine column" />
+        <Stat label="Recommendations" value={String(status.data?.recommendations ?? 0)} tone="text-slate-100" sub="generated to date" />
+        <Stat label="Outcomes logged" value={String(status.data?.outcomes ?? 0)} tone="text-slate-100" sub="ground truth collected" />
       </div>
     </div>
   );

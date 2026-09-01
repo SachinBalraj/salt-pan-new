@@ -1,11 +1,18 @@
+import logging
 import os
+import sys
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 PROJECT_DIR = BACKEND_DIR.parent
+
+_MAX_UPLOAD_MB = 50  # hard ceiling for CSV uploads
 
 
 class Settings(BaseSettings):
@@ -39,6 +46,71 @@ class Settings(BaseSettings):
     weather_csv_path: str = ""
     weather_default_lat: float = 19.17
     weather_default_lon: float = 74.73
+
+    # --- Security / reliability settings ---
+    max_upload_mb: int = _MAX_UPLOAD_MB
+    # Equipment safety: if True the system MUST NOT send commands to physical
+    # pumps, valves, gates, or any actuator. This is a hard safety guardrail
+    # for prototype / field-trial stages.
+    physical_equipment_control: bool = False
+    # Production deployments MUST set this to False after risk assessment.
+    allow_auto_retrain: bool = True
+
+    @field_validator("environment")
+    @classmethod
+    def _validate_environment(cls, v: str) -> str:
+        allowed = {"development", "staging", "production", "testing"}
+        if v not in allowed:
+            raise ValueError(
+                f"ENVIRONMENT must be one of {sorted(allowed)}, got '{v}'"
+            )
+        return v
+
+    @field_validator("database_url")
+    @classmethod
+    def _validate_database_url(cls, v: str) -> str:
+        if not v or not v.startswith(("sqlite", "postgresql", "mysql")):
+            raise ValueError(
+                "DATABASE_URL must start with sqlite, postgresql, or mysql"
+            )
+        # Never allow credentials logged.
+        return v
+
+    @field_validator("weather_api_key")
+    @classmethod
+    def _mask_weather_key(cls, v: str) -> str:
+        # Allow empty (mock mode). If present, mask for logs.
+        if v:
+            logger.info("Weather API key loaded (masked for security)")
+        return v
+
+    def validate_startup(self) -> None:
+        """Call once at startup to surface configuration issues early."""
+        problems: list[str] = []
+
+        if self.environment == "production":
+            if self.debug:
+                problems.append("DEBUG=true is unsafe in production")
+            if "sqlite" in self.database_url:
+                problems.append("SQLite is not recommended for production")
+            if self.auto_seed:
+                problems.append("AUTO_SEED=true should be false in production")
+
+        if self.physical_equipment_control:
+            problems.append(
+                "PHYSICAL_EQUIPMENT_CONTROL=true is ENABLED — "
+                "this allows the system to activate pumps/gates/valves. "
+                "Set to False for prototype deployments."
+            )
+
+        if self.max_upload_mb < 1 or self.max_upload_mb > 500:
+            problems.append(f"MAX_UPLOAD_MB={self.max_upload_mb} is outside 1-500 MB range")
+
+        if problems:
+            for p in problems:
+                logger.warning("CONFIG WARNING: %s", p)
+        else:
+            logger.info("Startup configuration validated OK (env=%s)", self.environment)
 
     @property
     def seeds(self):

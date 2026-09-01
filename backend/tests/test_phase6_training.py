@@ -248,7 +248,8 @@ def test_prediction_blocked_without_active_model(client, sample_dataset_path, db
                         json={"pan_id": pan_id, "horizon_days": 7,
                               "scenario": "actual_forecast"})
         assert r.status_code == 409, r.text
-        assert "No active model" in r.json()["detail"]
+        body = r.json()
+        assert "No active model" in (body.get("detail") or body.get("message", ""))
     finally:
         db.query(ModelVersion).update({ModelVersion.active: False})
         for mv in restored:

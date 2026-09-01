@@ -9,11 +9,14 @@ import type {
   ImportResult,
   LabelStatus,
   MlModel,
+  OperationEvent,
   Outcome,
   PredictionRecord,
   PredictionRun,
   Recommendation,
+  RetrainResult,
   SaltPan,
+  SensorReading,
   SimulateRainOut,
   SimulationResult,
   SystemStatus,
@@ -27,28 +30,56 @@ export const API_BASE =
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  detail?: string;
+  constructor(status: number, message: string, detail?: string) {
     super(message);
     this.status = status;
+    this.detail = detail;
   }
 }
 
+/**
+ * Maps HTTP status codes to human-readable messages so the user never sees
+ * raw "Internal Server Error" or cryptic 4xx codes.
+ */
+function friendlyErrorMessage(status: number, raw: string): string {
+  if (status === 413) return "The file is too large. Please split it into smaller files and try again.";
+  if (status === 415) return "Unsupported file type. Please upload a CSV or TSV file.";
+  if (status === 400) return raw || "The request was invalid. Check your input and try again.";
+  if (status === 401 || status === 403) return "You do not have permission to perform this action.";
+  if (status === 404) return "The requested resource was not found.";
+  if (status === 409) return raw || "This action conflicts with the current state. Refresh and try again.";
+  if (status === 422) return "Some values in your request were not valid. Please review and fix them.";
+  if (status === 500) return raw || "The server encountered an error. Please try again later.";
+  if (status === 502 || status === 503) return "The server is temporarily unavailable. Please try again in a moment.";
+  if (status === 504) return "The request timed out. The server may be under heavy load.";
+  if (status === 0) return "Could not connect to the server. Check your network connection.";
+  return raw || `An unexpected error occurred (HTTP ${status}).`;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: init?.body instanceof FormData
-      ? undefined
-      : { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-    ...init,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      headers: init?.body instanceof FormData
+        ? undefined
+        : { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      ...init,
+    });
+  } catch (err) {
+    // Network error — server unreachable
+    throw new ApiError(0, friendlyErrorMessage(0, ""), "Could not connect to the API server.");
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {
       const body = await res.json();
-      detail = body.detail ?? detail;
+      detail = body.detail ?? body.message ?? detail;
     } catch {
       /* keep statusText */
     }
-    throw new ApiError(res.status, String(detail));
+    const friendly = friendlyErrorMessage(res.status, String(detail));
+    throw new ApiError(res.status, friendly, String(detail));
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -116,6 +147,9 @@ export const api = {
   updateTwin: (id: number, state: Record<string, unknown>, source = "manual") =>
     post<SaltPan>(`/api/pans/${id}/twin`, { state, source }),
   digitalTwin: (id: number) => get<DigitalTwinOut>(`/api/pans/${id}/digital-twin`),
+  panSensors: (id: number) => get<SensorReading[]>(`/api/pans/${id}/sensors`),
+  panOperations: (id: number) =>
+    get<OperationEvent[]>(`/api/pans/${id}/operations`),
 
   // ---- models
   models: () => get<MlModel[]>("/api/models"),
@@ -166,6 +200,8 @@ export const api = {
     id: number,
     body: { status: "accepted" | "declined"; farmer_notes: string },
   ) => post<Recommendation>(`/api/recommendations/${id}/respond`, body),
+  completeRecommendation: (id: number) =>
+    post<Recommendation>(`/api/recommendations/${id}/complete`),
 
   // ---- outcomes
   outcomes: (panId?: number) =>
@@ -181,6 +217,7 @@ export const api = {
     post<FeedbackResult>(
       `/api/evaluation/feedback?outcome_ids=${(outcomeIds ?? []).join(",")}`,
     ),
+  retrainWithFeedback: () => post<RetrainResult>("/api/evaluation/retrain"),
 };
 
 export const fmt = {
@@ -215,6 +252,14 @@ export const fmt = {
       year: "numeric",
     });
   },
+  lit(n?: number | null): string {
+    if (n === null || n === undefined) return "—";
+    return `${Number(n).toLocaleString("en-IN", { maximumFractionDigits: 0 })} L`;
+  },
+  hours(n?: number | null): string {
+    if (n === null || n === undefined) return "—";
+    return `${Number(n).toFixed(0)} min`;
+  },
 };
 
 export const severityColor = (level: string) =>
@@ -239,5 +284,16 @@ export const readinessTone = (score: number) =>
     : score >= 0.45
       ? { text: "text-amber-300", bar: "bg-amber-400" }
       : { text: "text-sky-400", bar: "bg-sky-500" };
+
+export const recStatusTone = (status: string) =>
+  status === "accepted"
+    ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+    : status === "declined" || status === "rejected"
+      ? "border-slate-400/40 bg-slate-500/15 text-slate-300"
+      : status === "completed"
+        ? "border-brine-500/40 bg-brine-500/15 text-brine-300"
+        : status === "expired"
+          ? "border-zinc-500/40 bg-zinc-500/15 text-zinc-300"
+          : "border-amber-500/40 bg-amber-500/15 text-amber-300";
 
 export const forecastToDays = (f: { days: ForecastDay[] }) => f.days;

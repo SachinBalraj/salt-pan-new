@@ -1,0 +1,7 @@
+pan_id,harvest_date,actual_yield_kg,salt_purity_pct,actual_rainfall_mm,rain_damage,yield_loss_pct,outcome_notes
+PAN-1,2024-03-28,850,96.2,0.0,false,3.5,Good harvest after 12 dry days
+PAN-1,2024-04-15,780,93.5,22.5,true,12.0,Rain on April 3 dissolved surface salt
+PAN-2,2024-04-05,620,94.8,0.0,false,5.1,Normal harvest cycle completed
+PAN-2,2024-04-20,540,91.2,35.0,true,18.5,Heavy rain event caused significant loss
+PAN-3,2024-04-02,410,97.1,0.0,false,2.0,Excellent purity after extended dry period
+PAN-3,2024-04-18,380,95.5,8.0,false,6.0,Minor rain but manageable

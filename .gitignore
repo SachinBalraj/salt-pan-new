@@ -1,7 +1,11 @@
 # Local / default files
 .env
 .env.local
+.env.production
+.env.staging
 backend/.env
+backend/.env.local
+backend/.env.production
 *.db
 *.sqlite*
 .DS_Store
@@ -13,7 +17,7 @@ __pycache__/
 venv/
 .pytest_cache/
 .mypy_cache/
-.coverage
+.cov*
 htmlcov/
 
 # Node / Next.js
@@ -21,6 +25,7 @@ node_modules/
 frontend/.next/
 frontend/out/
 frontend/.npmrc
+*.tsbuildinfo
 
 # Generated data & artifacts (keep the folder structure)
 data/raw/*
@@ -32,3 +37,22 @@ models/*
 
 # Logs
 *.log
+
+# OS
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Secrets — NEVER commit these
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+*.jks
+secrets/
+credentials/
+# Prevent accidental commit of environment files with secrets
+.env*!
+.env.example

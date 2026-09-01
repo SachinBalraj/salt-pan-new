@@ -25,6 +25,10 @@ REGIONS = {
               "area_m2": 5000.0, "lat": 21.7645, "lon": 72.1519, "rain_scale": 0.9, "temp_offset": 0.0},
     "PAN-3": {"name": "Sambhar Salt Works H", "location": "Sambhar Lake, Rajasthan",
               "area_m2": 1200.0, "lat": 26.9063, "lon": 75.1839, "rain_scale": 0.6, "temp_offset": -1.5},
+    # PAN-03 is a dedicated, compact demo pan (published Phase-14 example:
+    # area 500 m², high salinity endpoint, rain-on-the-way harvest scenario).
+    "PAN-03": {"name": "Coastal Demo Pan C", "location": "Kutch Coast Demo Site, Gujarat",
+               "area_m2": 500.0, "lat": 23.1594, "lon": 69.8289, "rain_scale": 1.15, "temp_offset": 0.5},
 }
 
 
